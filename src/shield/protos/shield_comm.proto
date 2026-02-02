@@ -1,0 +1,38 @@
+syntax = "proto3";
+package shield;
+import "google/protobuf/timestamp.proto";
+
+service SignalNexus {
+  rpc StreamSignals (stream TradeInference) returns (stream NexusResponse);
+}
+
+service AuditSanctuary {
+  rpc CommitAudit (stream AuditEntry) returns (AuditResponse);
+}
+
+message TradeInference {
+  string inference_id = 1;
+  google.protobuf.Timestamp ts = 2;
+  string ticker = 3;
+  ConfidenceScores scores = 4;
+  string verdict = 5;
+  string signature = 6;
+}
+
+message ConfidenceScores {
+  float structural = 1;
+  float historical = 2;
+  float reasoning = 3;
+  float adaptive = 4;
+}
+
+message AuditEntry {
+  string entry_id = 1;
+  google.protobuf.Timestamp ts = 2;
+  string node_origin = 3;
+  string encrypted_payload = 4;
+  string prev_hash = 5;
+}
+
+message NexusResponse { bool received = 1; }
+message AuditResponse { bool committed = 1; }

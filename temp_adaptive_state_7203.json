@@ -1,0 +1,24 @@
+{
+  "parameters": {
+    "risk_multiplier": 2.0,
+    "position_scale": 1.5,
+    "stop_loss_pct": 0.2,
+    "take_profit_pct": 0.5,
+    "entry_threshold": 0.1,
+    "exit_threshold": 0.35,
+    "vol_target": 0.25,
+    "vol_lookback": 20,
+    "correlation_threshold": 0.7,
+    "decorrelation_bonus": 1.2,
+    "regime_adjustments": {}
+  },
+  "current_regime": {
+    "regime": "low_vol",
+    "confidence": 0.6321,
+    "volatility": 0.0868,
+    "correlation_avg": 0.0,
+    "momentum": -0.0013,
+    "timestamp": "2026-01-28T13:49:48.066490"
+  },
+  "last_updated": "2026-01-28T13:49:48.066526"
+}

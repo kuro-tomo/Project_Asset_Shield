@@ -1,0 +1,18 @@
+{
+  "phase_3_oos": {
+    "total_return": 1.854568519356569,
+    "annualized_return": 0.2176512638343544,
+    "max_drawdown": 0.025159951605124704,
+    "sharpe_ratio": 5.078088896015144,
+    "avg_exposure": 0.5967624531040863,
+    "trades": 15
+  },
+  "phase_4_modern": {
+    "total_return": 2.22645694996542,
+    "annualized_return": 0.20127044414344963,
+    "max_drawdown": 0.025159951605124704,
+    "sharpe_ratio": 4.725313584526759,
+    "avg_exposure": 0.5935966364471631,
+    "trades": 15
+  }
+}

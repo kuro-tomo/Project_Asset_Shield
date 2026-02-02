@@ -1,0 +1,8 @@
+[2026-01-28T09:16:08.004309] Registered access: api_key - active_api_key_place...
+[2026-01-28T09:16:08.004428] Burn scheduled: 1 items
+[2026-01-28T09:16:08.004471] Burn execution started (dry_run=True)
+[2026-01-28T09:16:08.017559] Burn execution completed: 3 actions, 0 errors
+[2026-01-28T14:35:58.102540] Registered access: api_key - active_api_key_place...
+[2026-01-28T14:35:58.102607] Burn scheduled: 1 items
+[2026-01-28T14:35:58.102653] Burn execution started (dry_run=True)
+[2026-01-28T14:35:58.116398] Burn execution completed: 3 actions, 0 errors

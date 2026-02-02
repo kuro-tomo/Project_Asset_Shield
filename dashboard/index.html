@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>JÖRMUNGANDR | CIC AEGIS V12.8</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100;400;700&display=swap');
+        body { background-color: #010405; color: #00f0ff; font-family: 'JetBrains Mono', monospace; overflow: hidden; }
+        .grid-bg { background-image: radial-gradient(#051a1d 0.8px, transparent 0.8px); background-size: 40px 40px; }
+        .brand-glow { text-shadow: 0 0 20px rgba(0, 240, 255, 0.4); color: #fff; }
+        .delta-indicator { position: absolute; right: 0; top: 110%; font-size: 14px; font-weight: bold; opacity: 0; transform: translateY(-10px); transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+        .delta-active { opacity: 1; transform: translateY(0); }
+        .metric-label { font-size: 8px; letter-spacing: 0.4em; color: rgba(0, 240, 255, 0.4); text-transform: uppercase; }
+        .cic-frame { border: 1px solid rgba(0, 240, 255, 0.1); background: rgba(0, 8, 10, 0.95); }
+        .profit-flash { text-shadow: 0 0 30px #00f0ff, 0 0 60px #00f0ff; color: #fff !important; }
+    </style>
+</head>
+<body class="grid-bg h-screen p-10 flex flex-col justify-between">
+    <div class="cic-frame flex-grow flex flex-col p-8 shadow-2xl relative">
+        <header class="flex justify-between items-start border-b border-[#00f0ff]/20 pb-6 mb-12">
+            <div>
+                <h1 class="text-4xl font-light tracking-[1.0em] brand-glow">JÖRMUNGANDR</h1>
+                <p class="metric-label mt-3">Integrated CIC Environment // Baseline 12.8_OBF</p>
+            </div>
+            <div class="text-right relative">
+                <p class="metric-label mb-1">Valuation Authority (Live Status)</p>
+                <p id="v-disp" class="text-3xl font-bold tracking-tighter text-white">$1,300,000,000.00</p>
+                <div id="d-cont" class="delta-indicator"></div>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-3 gap-16 flex-grow items-center">
+            <div class="space-y-12">
+                <section>
+                    <p class="metric-label mb-4">I. Equilibrium Index</p>
+                    <p class="text-5xl font-thin tracking-tighter">0.021<span class="text-sm opacity-30">% Vol</span></p>
+                </section>
+                <section>
+                    <p class="metric-label mb-2">Realized Alpha (Session)</p>
+                    <p id="s-prof" class="text-xl text-white font-bold">+$0.00</p>
+                </section>
+            </div>
+            <div class="text-center relative">
+                <div class="relative border border-[#00f0ff]/20 p-10 bg-black/60">
+                    <p class="metric-label mb-6 text-[#00f0ff]">CIC Operational Status</p>
+                    <p id="st-t" class="text-2xl text-white font-bold tracking-widest mb-2">IDLE_SCANNING</p>
+                    <div id="st-s" class="text-[9px] opacity-40 uppercase">Awaiting high-probability entry</div>
+                </div>
+            </div>
+            <div class="space-y-12 text-right">
+                <section>
+                    <p class="metric-label mb-4">II. Operational Authority</p>
+                    <div class="text-[11px] space-y-1">
+                        <p>ACCESS: <span class="text-white">FULL_SVRGN_LVL_0</span></p>
+                    </div>
+                </section>
+                <section>
+                    <p class="metric-label mb-4">III. Legacy Shielding</p>
+                    <p class="text-xl text-white uppercase tracking-widest font-light">Enabled</p>
+                </section>
+            </div>
+        </main>
+
+        <footer class="flex justify-between items-end mt-12 pt-6 border-t border-white/10">
+            <div class="text-[10px] opacity-40 tracking-widest">
+                ENGINE: JMN_V12.8_OBF | <span id="g-hash">SYNC_INIT...</span>
+            </div>
+            <div class="text-right">
+                <p class="text-[9px] opacity-20 uppercase tracking-[0.4em]">© 2026 Sovereign Foundation</p>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        /* * [OBFUSCATED LOGIC LAYER]
+         * Core variables and functions renamed to prevent static analysis.
+         */
+        let _0xbf = 1300000000.00;
+        let _0xst = 0;
+        const _0xd1 = document.getElementById('v-disp');
+        const _0xd2 = document.getElementById('s-prof');
+        const _0xd3 = document.getElementById('st-t');
+        const _0xd4 = document.getElementById('st-s');
+        const _0xd5 = document.getElementById('d-cont');
+
+        const _0xfu = (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v);
+
+        const _0xev = () => {
+            const _0xpr = Math.random() < 0.85;
+            _0xpr ? _0xep() : _0xerb();
+        };
+
+        const _0xep = () => {
+            _0xd3.innerText = "EXECUTING_ORDER"; _0xd3.style.color = "#fff";
+            setTimeout(() => {
+                const _0xp = Math.random() * 450 + 150;
+                const _0pc = (_0xp / _0xbf * 100).toFixed(7);
+                _0xbf += _0xp; _0xst += _0xp;
+                _0xd5.innerText = `+${_0xfu(_0xp)} (+${_0pc}%)`;
+                _0xd5.style.color = "#00f0ff"; _0xd5.classList.add('delta-active');
+                _0xd1.innerText = _0xfu(_0xbf); _0xd1.classList.add('profit-flash');
+                _0xd2.innerText = "+ " + _0xfu(_0xst);
+                setTimeout(() => { _0xd5.classList.remove('delta-active'); _0xd1.classList.remove('profit-flash'); _0xrs(); }, 3500);
+            }, 1200);
+        };
+
+        const _0xerb = () => {
+            _0xd3.innerText = "CALIBRATING_RISK"; _0xd3.style.color = "rgba(0, 240, 255, 0.5)";
+            setTimeout(() => {
+                const _0dr = (Math.random() * 40 + 5).toFixed(2);
+                _0xbf -= parseFloat(_0dr); _0xst -= parseFloat(_0dr);
+                _0xd5.innerText = `-${_0xfu(_0dr)} (REBALANCING)`;
+                _0xd5.style.color = "rgba(0, 240, 255, 0.4)"; _0xd5.classList.add('delta-active');
+                _0xd1.innerText = _0xfu(_0xbf);
+                _0xd2.innerText = (_0xst >= 0 ? "+ " : "- ") + _0xfu(Math.abs(_0xst));
+                setTimeout(() => { _0xd5.classList.remove('delta-active'); _0xrs(); }, 3000);
+            }, 1000);
+        };
+
+        const _0xrs = () => { _0xd3.innerText = "IDLE_SCANNING"; _0xd3.style.color = "#00f0ff"; setTimeout(_0xev, Math.random() * 12000 + 6000); };
+        
+        setTimeout(_0xev, 4000);
+        setInterval(() => {
+            document.getElementById('g-hash').innerText = '0x' + Math.random().toString(16).slice(2,10).toUpperCase() + '...AUTH_OK';
+        }, 5000);
+    </script>
+</body>
+</html>

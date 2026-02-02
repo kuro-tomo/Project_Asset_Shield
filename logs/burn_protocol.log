@@ -1,0 +1,18 @@
+[2026-01-27T10:13:33.814695] Registered access: api_key - jquants_api_key_xxxx...
+[2026-01-27T10:13:33.814832] Registered access: token - github_token_xxxxx...
+[2026-01-27T10:13:33.814884] Registered SSH key: ed25519 at ~/.ssh/id_ed25519
+[2026-01-27T10:13:33.814925] Burn scheduled: 3 items
+[2026-01-27T10:13:33.814962] Burn execution started (dry_run=True)
+[2026-01-27T10:13:33.827189] Burn execution completed: 5 actions, 0 errors
+[2026-01-27T10:14:33.134935] Registered access: api_key - active_api_key_place...
+[2026-01-27T10:14:33.135010] Burn scheduled: 1 items
+[2026-01-27T10:14:33.135057] Burn execution started (dry_run=True)
+[2026-01-27T10:14:33.147601] Burn execution completed: 3 actions, 0 errors
+[2026-01-27T10:41:22.665321] Registered access: api_key - active_api_key_place...
+[2026-01-27T10:41:22.665384] Burn scheduled: 1 items
+[2026-01-27T10:41:22.665424] Burn execution started (dry_run=True)
+[2026-01-27T10:41:22.677580] Burn execution completed: 3 actions, 0 errors
+[2026-01-27T10:49:10.581666] Registered access: api_key - active_api_key_place...
+[2026-01-27T10:49:10.581731] Burn scheduled: 1 items
+[2026-01-27T10:49:10.581779] Burn execution started (dry_run=True)
+[2026-01-27T10:49:10.593804] Burn execution completed: 3 actions, 0 errors

@@ -1,0 +1,8 @@
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+node_modules/
+dist/
+.next/
+*.log
+*.svg (画像データはトークンを食う割に意味がないことが多い)

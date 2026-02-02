@@ -1,0 +1,52 @@
+{
+  "run_id": "TRAIN_20260128_151808",
+  "mode": "training",
+  "stocks": [
+    "7203",
+    "9984",
+    "6758"
+  ],
+  "initial_capital": "¥100,000,000",
+  "phases": {
+    "phase_1_survival": {
+      "passed": false,
+      "total_return": "0.00%",
+      "annualized_return": "0.00%",
+      "sharpe_ratio": "0.00",
+      "max_drawdown": "0.00%",
+      "total_trades": 0,
+      "win_rate": "0.00%",
+      "profit_factor": "0.00",
+      "notes": "✓ Max DD: 0.00% (req: <40.00%) | ✓ Sharpe: 0.00 (req: >-0.50) | ✗ Trades: 0 (req: >10)"
+    },
+    "phase_2_expansion": {
+      "passed": false,
+      "total_return": "0.00%",
+      "annualized_return": "0.00%",
+      "sharpe_ratio": "0.00",
+      "max_drawdown": "0.00%",
+      "total_trades": 0,
+      "win_rate": "0.00%",
+      "profit_factor": "0.00",
+      "notes": "✗ Return: 0.00% (req: >5.00%) | ✗ Sharpe: 0.00 (req: >0.30) | ✗ Trades: 0 (req: >20)"
+    }
+  },
+  "brain_states": {
+    "7203": {
+      "adaptive_threshold": 0.65,
+      "risk_penalty": 1.5,
+      "lookback": 50
+    },
+    "9984": {
+      "adaptive_threshold": 0.65,
+      "risk_penalty": 1.5,
+      "lookback": 50
+    },
+    "6758": {
+      "adaptive_threshold": 0.65,
+      "risk_penalty": 1.5,
+      "lookback": 50
+    }
+  },
+  "brain_states_file": "output/brain_states_trained.json"
+}

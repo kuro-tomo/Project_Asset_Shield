@@ -1,0 +1,17 @@
+{
+  "7203": {
+    "adaptive_threshold": 0.65,
+    "risk_penalty": 1.5,
+    "lookback": 50
+  },
+  "9984": {
+    "adaptive_threshold": 0.65,
+    "risk_penalty": 1.5,
+    "lookback": 50
+  },
+  "6758": {
+    "adaptive_threshold": 0.65,
+    "risk_penalty": 1.5,
+    "lookback": 50
+  }
+}
