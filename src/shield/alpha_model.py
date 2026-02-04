@@ -128,7 +128,7 @@ class MarketImpactModel:
     ) -> None:
         """
         Set stock-specific data for impact calculation.
-        
+
         Args:
             code: Stock code
             adv: Average Daily Volume (shares)
@@ -136,6 +136,121 @@ class MarketImpactModel:
         """
         self._adv_cache[code] = adv
         self._volatility_cache[code] = volatility
+
+    def set_adt_data(
+        self,
+        code: str,
+        adt_20d: float,
+        adt_60d: float = None,
+        volatility: float = None
+    ) -> None:
+        """
+        Set ADT (Average Daily Turnover) data for capacity-aware impact calculation.
+
+        This method is designed to work with the CapacityEngine for
+        institutional-scale position sizing.
+
+        Args:
+            code: Stock code
+            adt_20d: 20-day average daily turnover in JPY
+            adt_60d: 60-day average daily turnover (fallback, optional)
+            volatility: Annualized volatility (optional)
+        """
+        # Store ADT (turnover) - convert to approximate ADV if needed for compatibility
+        # Assuming average price of 2000 JPY for conversion
+        estimated_price = 2000
+        estimated_adv = adt_20d / estimated_price if adt_20d > 0 else 0
+
+        self._adv_cache[code] = estimated_adv
+        self._adt_cache = getattr(self, '_adt_cache', {})
+        self._adt_cache[code] = {
+            'adt_20d': adt_20d,
+            'adt_60d': adt_60d or adt_20d
+        }
+
+        if volatility:
+            self._volatility_cache[code] = volatility
+
+    def get_adt(self, code: str, lookback: int = 20) -> float:
+        """
+        Get ADT (Average Daily Turnover) for a stock.
+
+        Args:
+            code: Stock code
+            lookback: 20 or 60 day lookback
+
+        Returns:
+            ADT in JPY, or 0 if not available
+        """
+        adt_cache = getattr(self, '_adt_cache', {})
+        if code not in adt_cache:
+            return 0.0
+
+        if lookback <= 20:
+            return adt_cache[code].get('adt_20d', 0.0)
+        return adt_cache[code].get('adt_60d', 0.0)
+
+    def calculate_capacity_adjusted_size(
+        self,
+        code: str,
+        target_value: float,
+        max_participation: float = 0.10,
+        max_impact_bps: float = 50.0
+    ) -> tuple:
+        """
+        Calculate capacity-adjusted position size.
+
+        Ensures position size respects:
+        1. Maximum participation rate (10% of daily volume)
+        2. Maximum acceptable market impact (50 bps)
+
+        Args:
+            code: Stock code
+            target_value: Target position value in JPY
+            max_participation: Maximum fraction of daily turnover (default 10%)
+            max_impact_bps: Maximum acceptable impact in bps (default 50)
+
+        Returns:
+            Tuple of (adjusted_value, impact_bps, is_tradeable)
+        """
+        adt = self.get_adt(code, 20)
+
+        if adt <= 0:
+            return (0, float('inf'), False)
+
+        # Capacity constraint
+        max_from_capacity = adt * max_participation
+
+        # Calculate impact for target value
+        impact = self.estimate_total_impact(
+            code=code,
+            order_size=int(target_value / 2000),  # Approximate shares
+            price=2000,
+            side="BUY",
+            urgency="NORMAL"
+        )
+
+        # Adjust if impact exceeds limit
+        adjusted_value = target_value
+        if impact.total_impact_bps > max_impact_bps:
+            reduction_factor = max_impact_bps / impact.total_impact_bps
+            adjusted_value = target_value * reduction_factor
+
+        # Apply capacity constraint
+        adjusted_value = min(adjusted_value, max_from_capacity)
+
+        # Recalculate impact for adjusted value
+        final_impact = self.estimate_total_impact(
+            code=code,
+            order_size=int(adjusted_value / 2000),
+            price=2000,
+            side="BUY",
+            urgency="NORMAL"
+        )
+
+        is_tradeable = final_impact.total_impact_bps <= max_impact_bps
+
+        return (adjusted_value, final_impact.total_impact_bps, is_tradeable)
         
     def calculate_permanent_impact(
         self,

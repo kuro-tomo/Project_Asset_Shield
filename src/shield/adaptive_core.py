@@ -62,28 +62,72 @@ class ModelParameters:
     position_scale: float = 1.0
     stop_loss_pct: float = 0.02
     take_profit_pct: float = 0.04
-    
+
     # Signal thresholds
     entry_threshold: float = 0.65
     exit_threshold: float = 0.35
-    
+
     # Volatility adjustments
     vol_target: float = 0.15  # 15% annualized target vol
     vol_lookback: int = 20
-    
+
     # Correlation parameters
     correlation_threshold: float = 0.7
     decorrelation_bonus: float = 1.2
-    
+
+    # Phase 2: Cash allocation parameters
+    cash_allocation: float = 0.20  # Base cash allocation (20%)
+    max_cash_allocation: float = 0.85  # Maximum cash in crisis (85%)
+    dd_protection_cash: float = 0.50  # Additional cash when DD protection active
+
     # Regime-specific overrides
     regime_adjustments: Dict[str, Dict] = field(default_factory=dict)
-    
+
     def to_dict(self) -> Dict:
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: Dict) -> 'ModelParameters':
-        return cls(**data)
+        # Handle new fields gracefully for backwards compatibility
+        known_fields = {
+            'risk_multiplier', 'position_scale', 'stop_loss_pct', 'take_profit_pct',
+            'entry_threshold', 'exit_threshold', 'vol_target', 'vol_lookback',
+            'correlation_threshold', 'decorrelation_bonus', 'cash_allocation',
+            'max_cash_allocation', 'dd_protection_cash', 'regime_adjustments'
+        }
+        filtered_data = {k: v for k, v in data.items() if k in known_fields}
+        return cls(**filtered_data)
+
+    def get_effective_cash_allocation(
+        self,
+        regime: 'MarketRegime',
+        drawdown_protection_active: bool = False
+    ) -> float:
+        """
+        Calculate effective cash allocation based on regime and DD state.
+
+        Args:
+            regime: Current market regime
+            drawdown_protection_active: Whether DD protection is triggered
+
+        Returns:
+            Target cash allocation (0-1)
+        """
+        # Base allocation from regime
+        regime_cash = {
+            MarketRegime.CRISIS: 0.70,
+            MarketRegime.HIGH_VOL: 0.50,
+            MarketRegime.NORMAL: 0.20,
+            MarketRegime.LOW_VOL: 0.10,
+            MarketRegime.BULL_TREND: 0.15,
+            MarketRegime.BEAR_TREND: 0.40
+        }.get(regime, self.cash_allocation)
+
+        # Add DD protection if active
+        if drawdown_protection_active:
+            regime_cash += self.dd_protection_cash
+
+        return min(regime_cash, self.max_cash_allocation)
 
 
 class VolatilityTracker:

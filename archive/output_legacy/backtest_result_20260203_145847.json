@@ -1,0 +1,12 @@
+{
+  "strategy": "PBR <= 1.0 AND ROE >= 10%",
+  "period": "2008-01-01 to 2025-12-31",
+  "initial_capital": 10000000.0,
+  "final_equity": 169084333.03,
+  "total_return_pct": 1590.8433303,
+  "max_drawdown_pct": -45.87089340374359,
+  "sharpe_ratio": 0.7338982266097259,
+  "win_rate_pct": 53.48484848484848,
+  "total_trades": 660,
+  "annual_returns": {
+    

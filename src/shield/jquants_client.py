@@ -22,22 +22,23 @@ logger = logging.getLogger(__name__)
 
 
 class JQuantsEndpoint(Enum):
-    """J-Quants API Endpoints"""
-    AUTH_USER = "/token/auth_user"
-    AUTH_REFRESH = "/token/auth_refresh"
-    LISTED_INFO = "/listed/info"
-    PRICES_DAILY = "/prices/daily_quotes"
+    """J-Quants API Endpoints (v2)"""
+    # v2 API uses x-api-key authentication
+    LISTED_INFO = "/equities/master"
+    PRICES_DAILY = "/equities/bars/daily"
     TRADES = "/trades"
     ORDERBOOK = "/orderbook"
     MARGIN = "/markets/margin"
-    FINS_STATEMENTS = "/fins/statements"
+    FINS_STATEMENTS = "/fins/summary"
     FINS_ANNOUNCEMENT = "/fins/announcement"
 
 
 @dataclass
 class JQuantsConfig:
-    """Configuration for J-Quants API connection"""
-    base_url: str = "https://api.jquants.com/v1"
+    """Configuration for J-Quants API connection (v2 with x-api-key)"""
+    base_url: str = "https://api.jquants.com/v2"
+    api_key: str = ""  # x-api-key for v2 authentication
+    # Legacy fields (kept for backward compatibility)
     mail_address: str = ""
     password: str = ""
     refresh_token: str = ""
@@ -56,44 +57,63 @@ class JQuantsClient:
     def __init__(self, config: Optional[JQuantsConfig] = None):
         """
         Initialize J-Quants client with environment variables or config.
-        
-        Environment Variables:
+
+        Environment Variables (v2 API):
+            JQUANTS_API_KEY: API key for x-api-key authentication (preferred)
+            JQUANTS_X_API_KEY: Alternative name for API key
+
+        Legacy Environment Variables (v1 API - deprecated):
             JQUANTS_MAIL: J-Quants registered email
             JQUANTS_PASSWORD: J-Quants password
             JQUANTS_REFRESH_TOKEN: Optional pre-existing refresh token
         """
         self.config = config or JQuantsConfig(
+            api_key=os.environ.get("JQUANTS_API_KEY", "") or os.environ.get("JQUANTS_X_API_KEY", ""),
             mail_address=os.environ.get("JQUANTS_MAIL", ""),
             password=os.environ.get("JQUANTS_PASSWORD", ""),
             refresh_token=os.environ.get("JQUANTS_REFRESH_TOKEN", "")
         )
-        
+
         # Determine if we should use Mock Mode
         self.use_mock = False
-        if not self.config.mail_address or not self.config.password:
-            logger.warning("J-Quants credentials not found. Switching to MOCK MODE.")
-            self.use_mock = True
-            
+        if not self.config.api_key:
+            logger.warning("J-Quants API key not found. Checking legacy credentials...")
+            if not self.config.mail_address or not self.config.password:
+                logger.warning("No credentials found. Switching to MOCK MODE.")
+                self.use_mock = True
+
         self._session = requests.Session()
         self._session.headers.update({
             "Content-Type": "application/json",
             "Accept": "application/json"
         })
+
+        # Set x-api-key header if available (v2 auth)
+        if self.config.api_key:
+            self._session.headers.update({
+                "x-api-key": self.config.api_key
+            })
+            logger.info("J-Quants v2 API initialized with x-api-key authentication")
         
     def _ensure_authenticated(self) -> bool:
-        """Ensure valid authentication token exists"""
+        """Ensure valid authentication exists"""
         if self.use_mock:
             return True
-            
+
+        # v2 API: x-api-key doesn't expire, just verify it's set
+        if self.config.api_key:
+            return True
+
+        # Legacy v1 authentication (deprecated)
         if self.config.id_token and self.config.token_expiry:
             if datetime.now() < self.config.token_expiry - timedelta(minutes=5):
                 return True
-        
+
         # Try refresh token first
         if self.config.refresh_token:
             if self._refresh_id_token():
                 return True
-        
+
         # Fall back to full authentication
         return self._authenticate()
     
@@ -201,9 +221,16 @@ class JQuantsClient:
             params["code"] = code
         if date:
             params["date"] = date
-            
+
         result = self._request(JQuantsEndpoint.LISTED_INFO, params)
-        return result.get("info", []) if result else None
+        # v2 API returns data in "data" key, v1 used "info"
+        if result:
+            data = result.get("data", result.get("info", []))
+            # Convert v2 short field names to v1 long names for backward compatibility
+            if data and isinstance(data, list) and len(data) > 0 and "CoName" in data[0]:
+                return self._convert_v2_listed_to_v1(data)
+            return data
+        return None
     
     def get_daily_quotes(
         self,
@@ -264,9 +291,109 @@ class JQuantsClient:
             params["from"] = from_date
         if to_date:
             params["to"] = to_date
-            
+
         result = self._request(JQuantsEndpoint.PRICES_DAILY, params)
-        return result.get("daily_quotes", []) if result else None
+        # v2 API returns data in "data" key, v1 used "daily_quotes"
+        if result:
+            data = result.get("data", result.get("daily_quotes", []))
+            # Convert v2 short field names to v1 long names for backward compatibility
+            if data and isinstance(data, list) and len(data) > 0 and "O" in data[0]:
+                return self._convert_v2_quotes_to_v1(data)
+            return data
+        return None
+
+    def _convert_v2_quotes_to_v1(self, v2_data: List[Dict]) -> List[Dict]:
+        """Convert v2 API short field names to v1 long names for backward compatibility"""
+        field_map = {
+            "O": "Open", "H": "High", "L": "Low", "C": "Close",
+            "Vo": "Volume", "Va": "TurnoverValue",
+            "AdjFactor": "AdjustmentFactor",
+            "AdjO": "AdjustmentOpen", "AdjH": "AdjustmentHigh",
+            "AdjL": "AdjustmentLow", "AdjC": "AdjustmentClose"
+        }
+        converted = []
+        for record in v2_data:
+            new_record = {}
+            for k, v in record.items():
+                new_key = field_map.get(k, k)
+                new_record[new_key] = v
+            converted.append(new_record)
+        return converted
+
+    def _convert_v2_listed_to_v1(self, v2_data: List[Dict]) -> List[Dict]:
+        """Convert v2 API listed info field names to v1 long names for backward compatibility"""
+        field_map = {
+            "CoName": "CompanyName",
+            "CoNameEn": "CompanyNameEnglish",
+            "S17": "Sector17Code",
+            "S17Nm": "Sector17CodeName",
+            "S33": "Sector33Code",
+            "S33Nm": "Sector33CodeName",
+            "ScaleCat": "ScaleCategory",
+            "Mkt": "MarketCode",
+            "MktNm": "MarketCodeName",
+            "Mrgn": "MarginCode",
+            "MrgnNm": "MarginCodeName"
+        }
+        converted = []
+        for record in v2_data:
+            new_record = {}
+            for k, v in record.items():
+                new_key = field_map.get(k, k)
+                new_record[new_key] = v
+            converted.append(new_record)
+        return converted
+
+    def _convert_v2_fins_to_v1(self, v2_data: List[Dict]) -> List[Dict]:
+        """Convert v2 API financial statement field names to v1 long names for backward compatibility"""
+        field_map = {
+            # Disclosure info
+            "DiscDate": "DisclosedDate",
+            "DiscTime": "DisclosedTime",
+            "DiscNo": "DisclosureNumber",
+            "DocType": "TypeOfDocument",
+            # Period info
+            "CurPerType": "TypeOfCurrentPeriod",
+            "CurPerSt": "CurrentPeriodStartDate",
+            "CurPerEn": "CurrentPeriodEndDate",
+            "CurFYSt": "CurrentFiscalYearStartDate",
+            "CurFYEn": "CurrentFiscalYearEndDate",
+            # Financial metrics
+            "Sales": "NetSales",
+            "OP": "OperatingProfit",
+            "OdP": "OrdinaryProfit",
+            "NP": "Profit",
+            "EPS": "EarningsPerShare",
+            "DEPS": "DilutedEarningsPerShare",
+            "TA": "TotalAssets",
+            "Eq": "Equity",
+            "EqAR": "EquityToAssetRatio",
+            "BPS": "BookValuePerShare",
+            # Cash flow
+            "CFO": "CashFlowsFromOperatingActivities",
+            "CFI": "CashFlowsFromInvestingActivities",
+            "CFF": "CashFlowsFromFinancingActivities",
+            "CashEq": "CashAndEquivalents",
+            # Shares
+            "ShOutFY": "NumberOfIssuedAndOutstandingSharesAtTheEndOfFiscalYear",
+            "AvgSh": "AverageNumberOfShares",
+            # Dividends
+            "DivAnn": "AnnualDividendPerShare",
+            # Forecasts
+            "FSales": "ForecastNetSales",
+            "FOP": "ForecastOperatingProfit",
+            "FOdP": "ForecastOrdinaryProfit",
+            "FNP": "ForecastProfit",
+            "FEPS": "ForecastEarningsPerShare",
+        }
+        converted = []
+        for record in v2_data:
+            new_record = {}
+            for k, v in record.items():
+                new_key = field_map.get(k, k)
+                new_record[new_key] = v
+            converted.append(new_record)
+        return converted
     
     def get_trades(
         self,
@@ -394,9 +521,16 @@ class JQuantsClient:
             params["code"] = code
         if date:
             params["date"] = date
-            
+
         result = self._request(JQuantsEndpoint.FINS_STATEMENTS, params)
-        return result.get("statements", []) if result else None
+        # v2 API returns data in "data" key, v1 used "statements"
+        if result:
+            data = result.get("data", result.get("statements", []))
+            # Convert v2 short field names to v1 long names for backward compatibility
+            if data and isinstance(data, list) and len(data) > 0 and "Sales" in data[0]:
+                return self._convert_v2_fins_to_v1(data)
+            return data
+        return None
 
 
 class JQuantsDataPipeline:

@@ -2,18 +2,18 @@ import os
 
 def check_structure():
     print("=== JÖRMUNGANDR System Configuration Check ===")
-    
-    # 確認すべき重要ファイルリスト
+
+    # Critical files to verify
     targets = {
         "Root Files": [
-            "watcher.py", 
-            "jquants_mock_cluster.py", 
-            "silence_protocol.py", 
+            "watcher.py",
+            "jquants_mock_cluster.py",
+            "silence_protocol.py",
             ".owner_pulse"
         ],
-        "Modules (知能層)": [
-            "modules/brain.py", 
-            "modules/evolution.py", 
+        "Modules (Intelligence Layer)": [
+            "modules/brain.py",
+            "modules/evolution.py",
             "modules/silence.py"
         ]
     }

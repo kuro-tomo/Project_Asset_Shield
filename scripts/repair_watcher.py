@@ -10,7 +10,7 @@ from multiprocessing import Process, Manager
 from shield.brain import ShieldBrain
 from shield.evolution import EvolutionEngine
 
-# 監査ログ設定
+# Audit log configuration
 LOG_FORMAT = '%(asctime)s [%(levelname)s] %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, filename='sovereign_audit.log')
 
@@ -25,7 +25,7 @@ def monitor_asset(target_id, log_filename, shared_dict):
     brain = ShieldBrain(target_id=target_id)
     evolver = EvolutionEngine()
     prices_jpy = []
-    
+
     session = {"balance": 3333333.33, "total_profit": 0.0}
     position, entry_price_jpy = 0, 0
     tick_count = 0
@@ -43,7 +43,7 @@ def monitor_asset(target_id, log_filename, shared_dict):
                     if not line:
                         time.sleep(0.5)
                         continue
-                    
+
                     try:
                         price_jpy = float(line.strip().split(",")[1])
                     except: continue
@@ -53,7 +53,7 @@ def monitor_asset(target_id, log_filename, shared_dict):
 
                     if len(prices_jpy) >= 50:
                         conf = brain.calculate_confidence(prices_jpy)
-                        # 自己進化チェック
+                        # Self-evolution check
                         tick_count += 1
                         if tick_count % 100 == 0:
                             evo_result = evolver.evolve_brain(brain)
@@ -61,7 +61,7 @@ def monitor_asset(target_id, log_filename, shared_dict):
                                 logging.info(f"🧬 [{target_id}] EVOLVED: {evo_result}")
 
                         shared_dict[target_id] = {
-                            "price": price_jpy, "conf": conf, 
+                            "price": price_jpy, "conf": conf,
                             "status": "GUARD" if position == 1 else "OBSV",
                             "pnl": session["total_profit"]
                         }

@@ -1,0 +1,13 @@
+/Users/MBP/Library/Python/3.9/lib/python/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+INFO:__main__:======================================================================
+INFO:__main__:ASSET SHIELD - FINANCIAL DATA INGESTION
+INFO:__main__:======================================================================
+INFO:shield.jquants_client:J-Quants v2 API initialized with x-api-key authentication
+INFO:__main__:Total stocks to process: 4998
+INFO:__main__:Progress: [100/4998] - Saved: 2419
+INFO:__main__:Progress: [200/4998] - Saved: 3110
+INFO:__main__:Progress: [300/4998] - Saved: 3456
+INFO:__main__:Progress: [400/4998] - Saved: 11079
+INFO:__main__:Progress: [500/4998] - Saved: 18039
+INFO:__main__:Progress: [600/4998] - Saved: 22665

@@ -1,0 +1,113 @@
+{
+  "sync_status": {
+    "last_sync_date": "2026-02-03",
+    "total_records": 14900134,
+    "records_added_today": 0,
+    "stocks_updated": 0,
+    "gaps_detected": [
+      "2026-02-04"
+    ],
+    "is_current": false
+  },
+  "signals": [
+    {
+      "code": "95040",
+      "name": "95040",
+      "signal": "HOLD",
+      "price": 922.0,
+      "pbr": 0.469,
+      "roe": 13.95,
+      "composite_score": 0.2849,
+      "adt": 1692832963.0,
+      "impact_bps": 25.36,
+      "confidence": 0.6424261826375519,
+      "sector": ""
+    },
+    {
+      "code": "91040",
+      "name": "91040",
+      "signal": "HOLD",
+      "price": 4916.0,
+      "pbr": 0.639,
+      "roe": 15.62,
+      "composite_score": 0.2087,
+      "adt": 20210875750.0,
+      "impact_bps": 10.82,
+      "confidence": 0.6043556902097621,
+      "sector": ""
+    },
+    {
+      "code": "72800",
+      "name": "72800",
+      "signal": "HOLD",
+      "price": 1325.0,
+      "pbr": 0.697,
+      "roe": 10.7,
+      "composite_score": 0.1526,
+      "adt": 8064034600.0,
+      "impact_bps": 14.25,
+      "confidence": 0.576282458398903,
+      "sector": ""
+    },
+    {
+      "code": "91070",
+      "name": "91070",
+      "signal": "HOLD",
+      "price": 2236.5,
+      "pbr": 0.857,
+      "roe": 18.21,
+      "composite_score": 0.1144,
+      "adt": 12036356122.5,
+      "impact_bps": 12.56,
+      "confidence": 0.5572022069736073,
+      "sector": ""
+    },
+    {
+      "code": "95030",
+      "name": "95030",
+      "signal": "HOLD",
+      "price": 2397.0,
+      "pbr": 0.871,
+      "roe": 13.53,
+      "composite_score": 0.0813,
+      "adt": 8276410010.0,
+      "impact_bps": 14.13,
+      "confidence": 0.5406325794263368,
+      "sector": ""
+    },
+    {
+      "code": "16620",
+      "name": "16620",
+      "signal": "HOLD",
+      "price": 1872.0,
+      "pbr": 0.908,
+      "roe": 14.56,
+      "composite_score": 0.0687,
+      "adt": 9004110625.0,
+      "impact_bps": 13.75,
+      "confidence": 0.5343343875270153,
+      "sector": ""
+    }
+  ],
+  "drift": {
+    "total_signals_today": 6,
+    "total_signals_oos_avg": 2130,
+    "overlap_ratio": 1.0,
+    "new_entries": [],
+    "dropped_entries": [
+      "51910",
+      "32360",
+      "68710",
+      "88480",
+      "21300",
+      "18780",
+      "34750",
+      "74660",
+      "30310",
+      "47140"
+    ],
+    "drift_score": 0.0,
+    "is_anomaly": false
+  },
+  "report_path": "/Users/MBP/Desktop/Project_Asset_Shield/output/EVENING_RECON_REPORT.md"
+}

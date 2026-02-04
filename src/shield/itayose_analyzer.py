@@ -33,13 +33,13 @@ class OrderBookSnapshot:
     """Single order book snapshot during Itayose"""
     timestamp: datetime
     code: str
-    # Bid side (買い気配)
+    # Bid side (buy orders)
     bid_prices: List[float] = field(default_factory=list)
     bid_volumes: List[int] = field(default_factory=list)
-    # Ask side (売り気配)
+    # Ask side (sell orders)
     ask_prices: List[float] = field(default_factory=list)
     ask_volumes: List[int] = field(default_factory=list)
-    # Indicative price (気配値)
+    # Indicative price (expected opening price)
     indicative_price: Optional[float] = None
     indicative_volume: Optional[int] = None
 
@@ -59,7 +59,7 @@ class OFISignal:
 
 class ItayoseAnalyzer:
     """
-    Itayose (板寄せ) Pre-Market Analyzer
+    Itayose (Opening Auction) Pre-Market Analyzer
     
     Extracts institutional order flow signals from pre-market
     order book dynamics during the 8:00-9:00 JST window.
@@ -75,7 +75,7 @@ class ItayoseAnalyzer:
     ITAYOSE_END = dt_time(9, 0, 0)
     
     # Thresholds for institutional detection
-    INSTITUTIONAL_VOLUME_THRESHOLD = 100000  # 10万株以上
+    INSTITUTIONAL_VOLUME_THRESHOLD = 100000  # 100K+ shares
     LARGE_ORDER_RATIO = 0.05  # 5% of daily average volume
     
     def __init__(self, daily_avg_volume: Optional[Dict[str, int]] = None):

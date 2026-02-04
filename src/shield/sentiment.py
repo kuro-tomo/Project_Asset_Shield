@@ -6,21 +6,21 @@ class J_Sentiment:
     def __init__(self):
         api_key = os.environ.get("GEMINI_API_KEY")
         genai.configure(api_key=api_key)
-        # モデル名を最も互換性の高い指定に変更
+        # Use the most compatible model specification
         self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     def analyze(self, ticker, headlines):
         if not headlines: return {"score": 0.5, "logic": "No data"}
-        
-        # プロンプトをより厳格に
+
+        # Use strict prompt format
         prompt = f"Analyze sentiment for {ticker}. Return ONLY JSON {{'score': float, 'logic': 'string'}}. Headlines: {' | '.join(headlines)}"
-        
+
         try:
-            # v1beta ではなく標準の generate_content を使用
+            # Use standard generate_content (not v1beta)
             response = self.model.generate_content(prompt)
-            # Markdownの除去
+            # Remove markdown formatting
             clean_text = response.text.replace('```json', '').replace('```', '').strip()
             return json.loads(clean_text)
         except Exception as e:
-            # フォールバック時も辞書形式を維持
+            # Maintain dict format on fallback
             return {"score": 0.5, "logic": f"Fallback: {str(e)[:20]}"}

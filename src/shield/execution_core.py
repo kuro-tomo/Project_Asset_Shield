@@ -101,8 +101,8 @@ class ExecutionPlan:
 class TSETickSizeManager:
     """
     TSE Tick Size Rules Manager
-    
-    Implements the tick size (呼び値) rules for Tokyo Stock Exchange.
+
+    Implements the tick size rules for Tokyo Stock Exchange.
     Tick sizes vary based on price levels and TOPIX membership.
     """
     

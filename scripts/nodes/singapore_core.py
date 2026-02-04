@@ -10,7 +10,7 @@ def init_db():
     os.makedirs('logs', exist_ok=True)
     conn = sqlite3.connect('logs/audit_global.db')
     c = conn.cursor()
-    # 必要なカラムを確実に用意
+    # Ensure required columns exist
     c.execute('''CREATE TABLE IF NOT EXISTS audit_logs 
                  (id INTEGER PRIMARY KEY, timestamp_utc TEXT, node TEXT, entity TEXT, score REAL, llm_rationale TEXT)''')
     conn.commit()
@@ -18,7 +18,7 @@ def init_db():
 
 @app.post("/ingest")
 async def ingest_data(data: dict):
-    # 送信されたデータを取り出す
+    # Extract submitted data
     metadata = data.get("metadata", {})
     payload = (
         metadata.get("timestamp_utc"),

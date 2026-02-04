@@ -1,0 +1,25 @@
+{
+  "run_id": "INGEST_20260203_080218",
+  "started_at": "2026-02-03T08:02:18.023398",
+  "completed_at": "2026-02-03T08:02:19.033361",
+  "mode": "test",
+  "plan": "premium",
+  "stocks_requested": 3,
+  "stocks_succeeded": 3,
+  "stocks_failed": 0,
+  "total_records": 1524,
+  "date_range": {
+    "start": "2024-01-01",
+    "end": "2026-12-31"
+  },
+  "phases_completed": [
+    "test"
+  ],
+  "validation_summary": {
+    "valid_stocks": 3,
+    "stocks_with_issues": 0
+  },
+  "api_calls_made": 3,
+  "cache_size_mb": 271.8515625,
+  "errors": []
+}

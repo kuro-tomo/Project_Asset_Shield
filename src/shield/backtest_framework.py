@@ -210,14 +210,23 @@ class PhaseResult:
 class BacktestEngine:
     """
     Core backtest engine with survivorship-bias-free testing.
+
+    Phase 2 enhancements:
+    - Drawdown protection with hysteresis
+    - Capacity-aware position sizing
+    - Walk-forward phase tracking
     """
-    
+
     # Risk-free rate for Sharpe calculation (approximate JGB yield)
     RISK_FREE_RATE = 0.001  # 0.1%
-    
+
     # Trading days per year (TSE)
     TRADING_DAYS = 245
-    
+
+    # Phase 2: Drawdown protection thresholds
+    DD_PROTECTION_TRIGGER = 0.20    # Trigger at 20% drawdown
+    DD_PROTECTION_RECOVERY = 0.10   # Recover at 10% drawdown
+
     def __init__(
         self,
         initial_capital: float = 100_000_000,  # ¥100M
@@ -226,7 +235,7 @@ class BacktestEngine:
     ):
         """
         Initialize backtest engine.
-        
+
         Args:
             initial_capital: Starting capital in JPY
             commission_rate: Commission as fraction of trade value
@@ -235,7 +244,7 @@ class BacktestEngine:
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
-        
+
         # State
         self.cash = initial_capital
         self.positions: Dict[str, Trade] = {}
@@ -243,6 +252,11 @@ class BacktestEngine:
         self.daily_snapshots: List[DailySnapshot] = []
         self.current_date: Optional[date] = None
         self.peak_equity = initial_capital
+
+        # Phase 2: Drawdown protection state
+        self.drawdown_protection_active: bool = False
+        self._dd_protection_trigger_date: Optional[date] = None
+        self._days_in_protection: int = 0
         
     def reset(self) -> None:
         """Reset engine state"""
@@ -252,6 +266,11 @@ class BacktestEngine:
         self.daily_snapshots = []
         self.current_date = None
         self.peak_equity = self.initial_capital
+
+        # Phase 2: Reset drawdown protection
+        self.drawdown_protection_active = False
+        self._dd_protection_trigger_date = None
+        self._days_in_protection = 0
         
     def get_equity(self, prices: Dict[str, float]) -> float:
         """Calculate current equity"""
@@ -337,7 +356,7 @@ class BacktestEngine:
         """Record end-of-day snapshot"""
         equity = self.get_equity(prices)
         positions_value = equity - self.cash
-        
+
         # Calculate returns
         if self.daily_snapshots:
             prev_equity = self.daily_snapshots[-1].equity
@@ -346,7 +365,7 @@ class BacktestEngine:
         else:
             daily_return = 0.0
             cumulative_return = 0.0
-        
+
         # Update peak and drawdown
         self.peak_equity = max(self.peak_equity, equity)
         drawdown = (self.peak_equity - equity) / self.peak_equity
@@ -355,7 +374,10 @@ class BacktestEngine:
             default=0.0
         )
         max_drawdown = max(max_drawdown, drawdown)
-        
+
+        # Phase 2: Update drawdown protection state with hysteresis
+        self._update_drawdown_protection(drawdown)
+
         snapshot = DailySnapshot(
             date=self.current_date,
             equity=equity,
@@ -367,9 +389,72 @@ class BacktestEngine:
             max_drawdown=max_drawdown,
             positions_count=len(self.positions)
         )
-        
+
         self.daily_snapshots.append(snapshot)
         return snapshot
+
+    def _update_drawdown_protection(self, current_drawdown: float) -> None:
+        """
+        Update drawdown protection state with hysteresis.
+
+        Trigger: DD > 20% -> Protection Active
+        Recovery: DD < 10% -> Protection Cleared
+
+        This prevents whipsaw by requiring significant recovery before
+        returning to normal operation.
+        """
+        if not self.drawdown_protection_active:
+            # Check for trigger
+            if current_drawdown >= self.DD_PROTECTION_TRIGGER:
+                self.drawdown_protection_active = True
+                self._dd_protection_trigger_date = self.current_date
+                self._days_in_protection = 0
+                logger.warning(
+                    f"DRAWDOWN PROTECTION TRIGGERED: DD={current_drawdown:.1%} "
+                    f"(threshold: {self.DD_PROTECTION_TRIGGER:.0%})"
+                )
+        else:
+            # Track days in protection
+            self._days_in_protection += 1
+
+            # Check for recovery
+            if current_drawdown <= self.DD_PROTECTION_RECOVERY:
+                self.drawdown_protection_active = False
+                logger.info(
+                    f"Drawdown protection cleared after {self._days_in_protection} days. "
+                    f"DD={current_drawdown:.1%}"
+                )
+                self._dd_protection_trigger_date = None
+                self._days_in_protection = 0
+
+    def get_position_size_multiplier(self) -> float:
+        """
+        Get position size multiplier based on drawdown protection state.
+
+        Returns:
+            1.0 for normal operation, 0.5 when protection is active
+        """
+        if self.drawdown_protection_active:
+            return 0.5  # Reduce position sizes by 50%
+        return 1.0
+
+    def is_new_entry_allowed(self, max_positions: int = 10) -> bool:
+        """
+        Check if new position entry is allowed.
+
+        When drawdown protection is active, limit to half the normal positions.
+
+        Args:
+            max_positions: Maximum positions in normal operation
+
+        Returns:
+            True if new entry is allowed
+        """
+        if self.drawdown_protection_active:
+            # Only allow half the positions during protection
+            return len(self.positions) < max_positions // 2
+
+        return len(self.positions) < max_positions
     
     def calculate_metrics(self) -> BacktestMetrics:
         """Calculate comprehensive performance metrics"""

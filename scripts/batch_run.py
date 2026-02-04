@@ -1,13 +1,13 @@
 import subprocess
 import time
 
-# 巡回するターゲットリスト（日本の主要5社）
+# Target list (Japan major 5 companies)
 TARGET_TICKERS = [
-    "7203.T",  # トヨタ自動車
-    "6758.T",  # ソニーグループ
-    "9984.T",  # ソフトバンクグループ
-    "8306.T",  # 三菱UFJフィナンシャルG
-    "6861.T"   # キーエンス
+    "7203.T",  # Toyota Motor
+    "6758.T",  # Sony Group
+    "9984.T",  # SoftBank Group
+    "8306.T",  # Mitsubishi UFJ Financial
+    "6861.T"   # Keyence
 ]
 
 def run_batch():
@@ -19,19 +19,19 @@ def run_batch():
     for ticker in TARGET_TICKERS:
         print(f"📡 Next Target: {ticker}")
         try:
-            # main.py を外部プロセスとして実行
+            # Execute main.py as external process
             result = subprocess.run(["python3", "main.py", ticker], capture_output=True, text=True)
-            
+
             if result.returncode == 0:
                 print(f"✅ Mission Success for {ticker}")
             else:
                 print(f"❌ Mission Failed for {ticker}")
                 print(f"Error Log: {result.stderr}")
-        
+
         except Exception as e:
             print(f"⚠️ Unexpected error while processing {ticker}: {e}")
-        
-        # サーバーへの負荷軽減と検知回避のためのクールダウン
+
+        # Cooldown for server load reduction and rate limiting
         print(f"⏳ Cooling down for 5 seconds...")
         time.sleep(5)
 

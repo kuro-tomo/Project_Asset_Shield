@@ -3,9 +3,9 @@ import os
 import sys
 
 def identify_node():
-    """機体（Node）を識別する"""
+    """Identify the current node (machine)"""
     hostname = socket.gethostname()
-    # 環境変数 JOR_NODE_TYPE があれば優先、なければホスト名で判定
+    # Use JOR_NODE_TYPE env var if set, otherwise determine from hostname
     node_type = os.getenv('JOR_NODE_TYPE', '').upper()
     
     if node_type == 'MASTER' or "TIRnoMacBook-Pro" in hostname:
@@ -24,12 +24,12 @@ def main():
         print("[Status] Initializing Master Services...")
         print("[Status] J-Quants V2 Stream Standby: OK")
         print("[Status] gRPC Relay Server: Initializing...")
-        # ここにMaster専用の起動ロジックを追加していく
+        # Master-specific startup logic goes here
     else:
         print("[Status] Initializing Agent Services...")
         print("[Status] Secure Tunnel to Master: Checking...")
         print("[Status] Monitoring Dashboard: Standby")
-        # ここにAgent専用の起動ロジックを追加していく
+        # Agent-specific startup logic goes here
 
 if __name__ == "__main__":
     main()

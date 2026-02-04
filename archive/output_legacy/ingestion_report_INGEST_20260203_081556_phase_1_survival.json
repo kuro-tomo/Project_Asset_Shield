@@ -1,0 +1,25 @@
+{
+  "run_id": "INGEST_20260203_081556_phase_1_survival",
+  "started_at": "2026-02-03T08:15:56.917673",
+  "completed_at": "2026-02-03T08:59:26.235316",
+  "mode": "phase:phase_1_survival",
+  "plan": "premium",
+  "stocks_requested": 2577,
+  "stocks_succeeded": 2575,
+  "stocks_failed": 2,
+  "total_records": 1537273,
+  "date_range": {
+    "start": "2007-01-04",
+    "end": "2010-12-31"
+  },
+  "phases_completed": [
+    "phase_1_survival"
+  ],
+  "validation_summary": {
+    "valid_stocks": 2575,
+    "phase": "phase_1_survival"
+  },
+  "api_calls_made": 5158,
+  "cache_size_mb": 545.05078125,
+  "errors": []
+}

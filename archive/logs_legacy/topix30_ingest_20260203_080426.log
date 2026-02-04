@@ -1,0 +1,280 @@
+/Users/MBP/Library/Python/3.9/lib/python/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+INFO:__main__:Extended database schema initialized
+INFO:shield.jquants_client:J-Quants v2 API initialized with x-api-key authentication
+INFO:__main__:
+======================================================================
+INFO:__main__:ASSET SHIELD - TEST INGESTION
+INFO:__main__:Period: 2008 to 2026 (19 years)
+INFO:__main__:Stocks: 20
+INFO:__main__:======================================================================
+INFO:__main__:Verifying J-Quants credentials...
+INFO:__main__:  Credentials verified. Test fetch: トヨタ自動車
+INFO:__main__:  Plan: premium
+INFO:__main__:  Rate limit: 600 req/min
+INFO:__main__:
+============================================================
+INFO:__main__:Ingesting daily quotes: 2008-01-01 to 2026-12-31
+INFO:__main__:Stocks: 20
+INFO:__main__:============================================================
+INFO:__main__:
+[1/20] Processing 72030...
+INFO:shield.jquants_backtest_provider:Cache hit for 72030: 1243 quotes
+INFO:__main__:  Fetched 1243 records
+INFO:__main__:  Valid: 1243, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+[2/20] Processing 99840...
+INFO:shield.jquants_backtest_provider:Cache hit for 99840: 508 quotes
+INFO:__main__:  Fetched 508 records
+INFO:__main__:  Valid: 508, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+[3/20] Processing 67580...
+INFO:shield.jquants_backtest_provider:Cache hit for 67580: 1243 quotes
+INFO:__main__:  Fetched 1243 records
+INFO:__main__:  Valid: 1243, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+[4/20] Processing 83060...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 83060
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4340, Invalid: 0
+INFO:__main__:
+[5/20] Processing 94320...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 94320
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2008-12-25
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2008-12-26
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2008-12-29
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2008-12-30
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4336, Invalid: 0
+WARNING:__main__:    4 price anomalies detected
+INFO:__main__:
+[6/20] Processing 68610...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 68610
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4340, Invalid: 0
+WARNING:__main__:    2 price anomalies detected
+INFO:__main__:
+[7/20] Processing 60980...
+INFO:shield.jquants_backtest_provider:Fetched 2759 quotes for 60980
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 2759 records
+INFO:__main__:  Valid: 2758, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+[8/20] Processing 40630...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 40630
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4340, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+[9/20] Processing 80350...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 80350
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4340, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+[10/20] Processing 65010...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 65010
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4340, Invalid: 0
+WARNING:__main__:    2 price anomalies detected
+INFO:__main__:
+[11/20] Processing 69020...
+INFO:shield.jquants_backtest_provider:Cache hit for 69020: 1243 quotes
+INFO:__main__:  Fetched 1243 records
+INFO:__main__:  Valid: 1243, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+[12/20] Processing 77410...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 77410
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4340, Invalid: 0
+INFO:__main__:
+[13/20] Processing 45190...
+INFO:shield.jquants_backtest_provider:Cache hit for 45190: 1243 quotes
+INFO:__main__:  Fetched 1243 records
+INFO:__main__:  Valid: 1243, Invalid: 0
+INFO:__main__:
+[14/20] Processing 63670...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 63670
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4340, Invalid: 0
+INFO:__main__:
+[15/20] Processing 94330...
+INFO:shield.jquants_backtest_provider:Cache hit for 94330: 1243 quotes
+INFO:__main__:  Fetched 1243 records
+INFO:__main__:  Valid: 1243, Invalid: 0
+INFO:__main__:
+[16/20] Processing 72670...
+INFO:shield.jquants_backtest_provider:Cache hit for 72670: 1243 quotes
+INFO:__main__:  Fetched 1243 records
+INFO:__main__:  Valid: 1243, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+[17/20] Processing 83160...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 83160
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2008-12-25
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2008-12-26
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2008-12-29
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2008-12-30
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4336, Invalid: 0
+WARNING:__main__:    2 price anomalies detected
+INFO:__main__:
+[18/20] Processing 45020...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 45020
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4340, Invalid: 0
+INFO:__main__:
+[19/20] Processing 69540...
+INFO:shield.jquants_backtest_provider:Cache hit for 69540: 1243 quotes
+INFO:__main__:  Fetched 1243 records
+INFO:__main__:  Valid: 1243, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+[20/20] Processing 33820...
+INFO:shield.jquants_backtest_provider:Fetched 4341 quotes for 33820
+WARNING:shield.jquants_backtest_provider:Invalid quote skipped: 2020-10-01
+INFO:__main__:  Fetched 4341 records
+INFO:__main__:  Valid: 4340, Invalid: 0
+WARNING:__main__:    1 price anomalies detected
+INFO:__main__:
+======================================================================
+INFO:__main__:DATA INTEGRITY REPORT
+INFO:__main__:======================================================================
+INFO:__main__:
+33820: [OK]
+INFO:__main__:  Records: 4,340 valid, 0 invalid
+INFO:__main__:  Missing dates: 618 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2024-02-28: 66.9% change
+INFO:__main__:
+40630: [OK]
+INFO:__main__:  Records: 4,340 valid, 0 invalid
+INFO:__main__:  Missing dates: 618 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2023-03-30: 80.2% change
+INFO:__main__:
+45020: [OK]
+INFO:__main__:  Records: 4,340 valid, 0 invalid
+INFO:__main__:  Missing dates: 618 (may be holidays)
+INFO:__main__:
+45190: [OK]
+INFO:__main__:  Records: 1,243 valid, 0 invalid
+INFO:__main__:  Missing dates: 3715 (may be holidays)
+INFO:__main__:
+60980: [OK]
+INFO:__main__:  Records: 2,758 valid, 0 invalid
+INFO:__main__:  Missing dates: 2200 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2017-06-28: 67.4% change
+INFO:__main__:
+63670: [OK]
+INFO:__main__:  Records: 4,340 valid, 0 invalid
+INFO:__main__:  Missing dates: 618 (may be holidays)
+INFO:__main__:
+65010: [OK]
+INFO:__main__:  Records: 4,340 valid, 0 invalid
+INFO:__main__:  Missing dates: 618 (may be holidays)
+INFO:__main__:  Price anomalies: 2
+INFO:__main__:    - 2018-09-26: 400.6% change
+INFO:__main__:    - 2024-06-27: 79.3% change
+INFO:__main__:
+67580: [OK]
+INFO:__main__:  Records: 1,243 valid, 0 invalid
+INFO:__main__:  Missing dates: 3715 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2024-09-27: 79.9% change
+INFO:__main__:
+68610: [OK]
+INFO:__main__:  Records: 4,340 valid, 0 invalid
+INFO:__main__:  Missing dates: 618 (may be holidays)
+INFO:__main__:  Price anomalies: 2
+INFO:__main__:    - 2017-01-18: 50.5% change
+INFO:__main__:    - 2019-11-19: 50.7% change
+INFO:__main__:
+69020: [OK]
+INFO:__main__:  Records: 1,243 valid, 0 invalid
+INFO:__main__:  Missing dates: 3715 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2023-09-28: 75.3% change
+INFO:__main__:
+69540: [OK]
+INFO:__main__:  Records: 1,243 valid, 0 invalid
+INFO:__main__:  Missing dates: 3715 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2023-03-30: 80.0% change
+INFO:__main__:
+72030: [OK]
+INFO:__main__:  Records: 1,243 valid, 0 invalid
+INFO:__main__:  Missing dates: 3715 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2021-09-29: 80.0% change
+INFO:__main__:
+72670: [OK]
+INFO:__main__:  Records: 1,243 valid, 0 invalid
+INFO:__main__:  Missing dates: 3715 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2023-09-28: 67.1% change
+INFO:__main__:
+77410: [OK]
+INFO:__main__:  Records: 4,340 valid, 0 invalid
+INFO:__main__:  Missing dates: 618 (may be holidays)
+INFO:__main__:
+80350: [OK]
+INFO:__main__:  Records: 4,340 valid, 0 invalid
+INFO:__main__:  Missing dates: 618 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2023-03-30: 66.8% change
+INFO:__main__:
+83060: [OK]
+INFO:__main__:  Records: 4,340 valid, 0 invalid
+INFO:__main__:  Missing dates: 618 (may be holidays)
+INFO:__main__:
+83160: [OK]
+INFO:__main__:  Records: 4,336 valid, 0 invalid
+INFO:__main__:  Missing dates: 622 (may be holidays)
+INFO:__main__:  Price anomalies: 2
+INFO:__main__:    - 2009-01-05: 98.9% change
+INFO:__main__:    - 2024-09-27: 67.8% change
+INFO:__main__:
+94320: [OK]
+INFO:__main__:  Records: 4,336 valid, 0 invalid
+INFO:__main__:  Missing dates: 622 (may be holidays)
+INFO:__main__:  Price anomalies: 4
+INFO:__main__:    - 2009-01-05: 99.0% change
+INFO:__main__:    - 2015-06-26: 50.8% change
+INFO:__main__:    - 2019-12-27: 50.5% change
+INFO:__main__:
+94330: [OK]
+INFO:__main__:  Records: 1,243 valid, 0 invalid
+INFO:__main__:  Missing dates: 3715 (may be holidays)
+INFO:__main__:
+99840: [OK]
+INFO:__main__:  Records: 508 valid, 0 invalid
+INFO:__main__:  Missing dates: 4450 (may be holidays)
+INFO:__main__:  Price anomalies: 1
+INFO:__main__:    - 2025-12-29: 74.8% change
+INFO:__main__:
+======================================================================
+INFO:__main__:TEST INGESTION COMPLETE
+INFO:__main__:======================================================================
+INFO:__main__:Duration: 0:00:59.459088
+INFO:__main__:Total records: 59,699
+INFO:__main__:Valid stocks: 20 / 20
+INFO:__main__:Cache size: 271.85 MB
+INFO:__main__:
+Report saved to: /Users/MBP/Desktop/Project_Asset_Shield/output/ingestion_report_INGEST_20260203_080426.json

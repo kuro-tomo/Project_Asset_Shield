@@ -356,6 +356,99 @@ class DataCache:
                     datetime.now().isoformat()
                 ))
             conn.commit()
+
+    def get_adt_data(
+        self,
+        code: str,
+        as_of_date: str,
+        lookback_20: int = 20,
+        lookback_60: int = 60
+    ) -> Dict[str, float]:
+        """
+        Get Average Daily Turnover (ADT) for capacity analysis.
+
+        Phase 2 addition: Computes ADT from cached turnover data for
+        use with CapacityEngine.
+
+        Args:
+            code: Stock code
+            as_of_date: Reference date (YYYY-MM-DD)
+            lookback_20: Days for short-term ADT
+            lookback_60: Days for long-term ADT
+
+        Returns:
+            Dict with 'adt_20d' and 'adt_60d' in JPY
+        """
+        with sqlite3.connect(self.cache_path) as conn:
+            # Get turnover data for lookback period
+            query = """
+                SELECT turnover FROM daily_quotes
+                WHERE code = ? AND date <= ?
+                ORDER BY date DESC
+                LIMIT ?
+            """
+
+            # 60-day lookback
+            cursor = conn.execute(query, (code, as_of_date, lookback_60))
+            turnover_data = [row[0] for row in cursor.fetchall() if row[0] and row[0] > 0]
+
+            if not turnover_data:
+                return {'adt_20d': 0.0, 'adt_60d': 0.0}
+
+            # Calculate ADTs
+            adt_60d = sum(turnover_data) / len(turnover_data) if turnover_data else 0.0
+            adt_20d = sum(turnover_data[:lookback_20]) / min(len(turnover_data), lookback_20) if turnover_data else 0.0
+
+            return {
+                'adt_20d': adt_20d,
+                'adt_60d': adt_60d
+            }
+
+    def get_adt_for_universe(
+        self,
+        codes: List[str],
+        as_of_date: str
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Get ADT data for multiple stocks.
+
+        Args:
+            codes: List of stock codes
+            as_of_date: Reference date
+
+        Returns:
+            Dict mapping code -> {'adt_20d': float, 'adt_60d': float}
+        """
+        result = {}
+        for code in codes:
+            result[code] = self.get_adt_data(code, as_of_date)
+        return result
+
+    def get_turnover_history(
+        self,
+        code: str,
+        start_date: str,
+        end_date: str
+    ) -> List[float]:
+        """
+        Get raw turnover history for a stock.
+
+        Args:
+            code: Stock code
+            start_date: Start date
+            end_date: End date
+
+        Returns:
+            List of daily turnover values in JPY
+        """
+        with sqlite3.connect(self.cache_path) as conn:
+            cursor = conn.execute("""
+                SELECT turnover FROM daily_quotes
+                WHERE code = ? AND date >= ? AND date <= ?
+                ORDER BY date
+            """, (code, start_date, end_date))
+
+            return [row[0] for row in cursor.fetchall() if row[0] is not None]
     
     def get_listed_info(self, code: str) -> Optional[Dict]:
         """Get cached listed info"""
@@ -932,14 +1025,19 @@ class SecureCredentialManager:
     
     def _get_from_env(self) -> JQuantsConfig:
         """Get credentials from environment variables"""
+        # v2 API: x-api-key authentication (preferred)
+        api_key = os.environ.get("JQUANTS_API_KEY", "") or os.environ.get("JQUANTS_X_API_KEY", "")
+
+        # Legacy v1 API credentials
         mail = os.environ.get("JQUANTS_MAIL", "")
         password = os.environ.get("JQUANTS_PASSWORD", "")
         refresh_token = os.environ.get("JQUANTS_REFRESH_TOKEN", "")
-        
-        if not mail or not password:
+
+        if not api_key and (not mail or not password):
             logger.warning("J-Quants credentials not found in environment")
-        
+
         return JQuantsConfig(
+            api_key=api_key,
             mail_address=mail,
             password=password,
             refresh_token=refresh_token

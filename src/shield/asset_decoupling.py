@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 class AssetVersion(Enum):
     """Asset version classification"""
-    VERSION_J = "version_j"  # Transferable (譲渡対象)
-    VERSION_Q = "version_q"  # IP Reserved (非譲渡)
+    VERSION_J = "version_j"  # Transferable (for white-label)
+    VERSION_Q = "version_q"  # IP Reserved (non-transferable)
 
 
 class AssetType(Enum):

@@ -18,7 +18,7 @@ def show_waitlist():
         if df.empty:
             print("No identities locked yet.")
         else:
-            # 表示を整える
+            # Format display
             print(df.to_string(index=False, justify='left'))
         print("="*70)
         print(f"Total: {len(df)} records found.\n")
