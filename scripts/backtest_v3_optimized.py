@@ -11,8 +11,14 @@ Optimizations:
 - Minimized object creation in hot loops
 - Efficient dictionary lookups with defaultdict
 
+Fixes (V3.1.0):
+- Point-in-Time ADT calculation (no future data leakage)
+- Comprehensive NaN/Inf guards throughout all calculations
+- Historical data lookback for ADT warmup period
+- Reduced ADT threshold (400M -> 100M) for better coverage
+
 Author: Asset Shield V3 Team
-Version: 3.0.0 (2026-02-04)
+Version: 3.1.0 (2026-02-04)
 """
 
 import os
@@ -177,60 +183,88 @@ class WalkForwardOptimized:
         self._equity[phase].append(equity)
 
     def calculate_metrics(self, phase: str) -> PhaseResult:
-        """Calculate metrics for a phase using vectorized operations"""
+        """Calculate metrics for a phase using vectorized operations with robust NaN handling"""
         trades = self._trades[phase]
-        equity = np.array(self._equity[phase], dtype=np.float64)
+        equity_raw = self._equity[phase]
         start_date, end_date = self.PHASES[phase]
 
-        if len(equity) < 2 or len(trades) == 0:
+        # Filter out NaN values from equity
+        equity = np.array([e for e in equity_raw if e is not None and np.isfinite(e)], dtype=np.float64)
+
+        if len(equity) < 2:
             return PhaseResult(
                 phase=phase, start_date=start_date, end_date=end_date,
                 total_return=0.0, annual_return=0.0, sharpe_ratio=0.0,
-                sortino_ratio=0.0, max_drawdown=0.0, total_trades=0,
-                win_rate=0.0, profit_factor=0.0, trades=[]
+                sortino_ratio=0.0, max_drawdown=0.0, total_trades=len(trades),
+                win_rate=0.0, profit_factor=0.0, trades=trades
             )
 
-        # Vectorized return calculation
-        total_return = (equity[-1] / equity[0]) - 1
-        years = (end_date - start_date).days / 365.25
-        annual_return = (1 + total_return) ** (1/years) - 1 if years > 0 else 0
+        # Filter trades with valid pnl
+        valid_trades = [t for t in trades if t.get('pnl') is not None and np.isfinite(t.get('pnl', 0))]
 
-        # Vectorized daily returns
-        daily_returns = np.diff(equity) / equity[:-1]
+        # Vectorized return calculation with safety checks
+        if equity[0] > 0:
+            total_return = (equity[-1] / equity[0]) - 1
+        else:
+            total_return = 0.0
+        total_return = 0.0 if not np.isfinite(total_return) else total_return
+
+        years = (end_date - start_date).days / 365.25
+        if years > 0 and (1 + total_return) > 0:
+            annual_return = (1 + total_return) ** (1/years) - 1
+        else:
+            annual_return = 0.0
+        annual_return = 0.0 if not np.isfinite(annual_return) else annual_return
+
+        # Vectorized daily returns with safety
+        with np.errstate(divide='ignore', invalid='ignore'):
+            daily_returns = np.diff(equity) / np.where(equity[:-1] > 0, equity[:-1], 1)
         daily_returns = np.nan_to_num(daily_returns, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Volatility (active returns only)
+        # Volatility (active returns only) with DoF safety
         active_mask = daily_returns != 0
-        if np.sum(active_mask) > 1:
-            vol = np.std(daily_returns[active_mask]) * np.sqrt(252)
+        active_count = int(np.sum(active_mask))
+        if active_count > 1:
+            vol = float(np.std(daily_returns[active_mask], ddof=1)) * np.sqrt(252)
+        elif len(daily_returns) > 1:
+            vol = float(np.std(daily_returns, ddof=1)) * np.sqrt(252)
         else:
-            vol = np.std(daily_returns) * np.sqrt(252) if len(daily_returns) > 1 else 0.0
+            vol = 0.0
 
-        vol = 0.0 if np.isnan(vol) or np.isinf(vol) else vol
+        vol = 0.0 if not np.isfinite(vol) or vol <= 0 else vol
         sharpe = (annual_return - 0.001) / vol if vol > 0.01 else 0.0
+        sharpe = 0.0 if not np.isfinite(sharpe) else sharpe
 
-        # Sortino (vectorized)
+        # Sortino (vectorized) with safety
         neg_mask = daily_returns < 0
-        if np.sum(neg_mask) > 0:
-            downside_vol = np.std(daily_returns[neg_mask]) * np.sqrt(252)
-            downside_vol = vol if np.isnan(downside_vol) or np.isinf(downside_vol) else downside_vol
+        neg_count = int(np.sum(neg_mask))
+        if neg_count > 1:
+            downside_vol = float(np.std(daily_returns[neg_mask], ddof=1)) * np.sqrt(252)
+            downside_vol = vol if not np.isfinite(downside_vol) or downside_vol <= 0 else downside_vol
             sortino = (annual_return - 0.001) / downside_vol if downside_vol > 0.01 else 0.0
         else:
             sortino = sharpe * 1.5 if sharpe > 0 else 0.0
+        sortino = 0.0 if not np.isfinite(sortino) else sortino
 
         # Max drawdown (vectorized)
         peak = np.maximum.accumulate(equity)
-        drawdown = (peak - equity) / np.where(peak > 0, peak, 1)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            drawdown = (peak - equity) / np.where(peak > 0, peak, 1)
+        drawdown = np.nan_to_num(drawdown, nan=0.0, posinf=0.0, neginf=0.0)
         max_dd = float(np.max(drawdown))
-        max_dd = 0.0 if np.isnan(max_dd) or np.isinf(max_dd) else max_dd
+        max_dd = 0.0 if not np.isfinite(max_dd) else max_dd
 
-        # Trade statistics
-        pnls = np.array([t.get('pnl', 0) for t in trades])
-        winners = pnls > 0
-        win_rate = np.mean(winners) if len(pnls) > 0 else 0
-        total_wins = np.sum(pnls[winners])
-        total_losses = np.abs(np.sum(pnls[~winners]))
-        pf = total_wins / total_losses if total_losses > 0 else float('inf')
+        # Trade statistics with NaN filtering
+        if valid_trades:
+            pnls = np.array([t.get('pnl', 0) for t in valid_trades], dtype=np.float64)
+            winners = pnls > 0
+            win_rate = float(np.mean(winners))
+            total_wins = float(np.sum(pnls[winners]))
+            total_losses = float(np.abs(np.sum(pnls[~winners])))
+            pf = total_wins / total_losses if total_losses > 0 else (10.0 if total_wins > 0 else 0.0)
+        else:
+            win_rate = 0.0
+            pf = 0.0
 
         return PhaseResult(
             phase=phase, start_date=start_date, end_date=end_date,
@@ -241,15 +275,28 @@ class WalkForwardOptimized:
         )
 
     def analyze(self) -> Dict:
-        """Full walk-forward analysis"""
+        """Full walk-forward analysis with robust NaN handling"""
         results = {phase: self.calculate_metrics(phase) for phase in self.PHASES}
 
         training = results["training"]
         validation = results["validation"]
         oos = results["out_of_sample"]
 
-        overfitting_ratio = validation.sharpe_ratio / training.sharpe_ratio if training.sharpe_ratio > 0 else 1.0
-        degradation_ratio = oos.sharpe_ratio / validation.sharpe_ratio if validation.sharpe_ratio > 0 else 1.0
+        # Safe ratio calculations
+        if training.sharpe_ratio > 0 and np.isfinite(training.sharpe_ratio) and np.isfinite(validation.sharpe_ratio):
+            overfitting_ratio = validation.sharpe_ratio / training.sharpe_ratio
+        else:
+            overfitting_ratio = 1.0
+
+        if validation.sharpe_ratio > 0 and np.isfinite(validation.sharpe_ratio) and np.isfinite(oos.sharpe_ratio):
+            degradation_ratio = oos.sharpe_ratio / validation.sharpe_ratio
+        else:
+            degradation_ratio = 1.0 if oos.sharpe_ratio > 0 else 0.0
+
+        # Ensure finite values
+        overfitting_ratio = 1.0 if not np.isfinite(overfitting_ratio) else overfitting_ratio
+        degradation_ratio = 0.0 if not np.isfinite(degradation_ratio) else degradation_ratio
+
         passed = overfitting_ratio >= 0.70 and degradation_ratio >= 0.70
 
         return {
@@ -360,9 +407,10 @@ class BacktesterV3Optimized:
         self.pbr_pct = 0.20
         self.roe_pct = 0.80
         self.composite_pct = 0.80
-        self.min_adt = 400_000_000
+        self.min_adt = 100_000_000  # Reduced from 400M to 100M for better liquidity coverage
         self.stop_loss = -0.15
         self.take_profit = 0.40
+        self.adt_lookback = 60  # Point-in-Time ADT lookback window
 
     def run(self, start_date: str = "2008-01-01", end_date: str = "2026-01-31") -> Dict:
         """Execute optimized backtest"""
@@ -383,7 +431,9 @@ class BacktesterV3Optimized:
         adt_map, tradeable = self._calc_adt(prices_df)
         price_idx = self._build_price_index(prices_df)
         fins_idx = self._build_fins_index(fins_df)
-        trading_dates = sorted(price_idx.keys())
+
+        # Only trade on dates in the specified period
+        trading_dates = sorted([d for d in price_idx.keys() if d >= start_date and d <= end_date])
         date_to_idx = {d: i for i, d in enumerate(trading_dates)}
         logger.info(f"Indices built in {(datetime.now()-t0).total_seconds():.1f}s")
         logger.info(f"Trading days: {len(trading_dates)}, Tradeable stocks: {len(tradeable)}")
@@ -444,17 +494,28 @@ class BacktesterV3Optimized:
                     continue
 
                 if pos.code in price_dict:
-                    pnl_pct = (price_dict[pos.code] / pos.entry_price) - 1
-                    if pnl_pct <= self.stop_loss or pnl_pct >= self.take_profit:
-                        to_close.append(pos)
+                    current_price = price_dict[pos.code]
+                    # NaN guard for current price in stop-loss/take-profit check
+                    if current_price is not None and np.isfinite(current_price) and current_price > 0 and pos.entry_price > 0:
+                        pnl_pct = (current_price / pos.entry_price) - 1
+                        if pnl_pct <= self.stop_loss or pnl_pct >= self.take_profit:
+                            to_close.append(pos)
 
             for pos in to_close:
                 if pos.code not in price_dict:
                     continue
 
                 exit_price = price_dict[pos.code]
+                # NaN guard for exit price
+                if exit_price is None or not np.isfinite(exit_price) or exit_price <= 0:
+                    # Use entry price as fallback (neutral exit)
+                    exit_price = pos.entry_price
+
                 pnl = (exit_price - pos.entry_price) * pos.shares
-                pnl_pct = (exit_price / pos.entry_price) - 1
+                pnl_pct = (exit_price / pos.entry_price) - 1 if pos.entry_price > 0 else 0.0
+                # Ensure pnl values are finite
+                pnl = 0.0 if not np.isfinite(pnl) else pnl
+                pnl_pct = 0.0 if not np.isfinite(pnl_pct) else pnl_pct
 
                 entry_date_str = trading_dates[pos.entry_date_idx]
                 trade = {
@@ -494,15 +555,21 @@ class BacktesterV3Optimized:
                 base_size = equity * self.position_pct
                 adj_size = base_size * self.risk_buffer.get_multiplier()
 
+                # Get Point-in-Time ADT for current date
+                date_adt = adt_map.get(current_date, {})
+                pit_tradeable = {c for c, a in date_adt.items() if a >= self.min_adt}
+
                 candidates = self._find_candidates_fast(
-                    current_date, price_dict, fins_idx, tradeable, adt_map
+                    current_date, price_dict, fins_idx, pit_tradeable, date_adt
                 )
 
                 held = {p.code for p in positions}
                 candidates = [c for c in candidates if c['code'] not in held]
 
                 for cand in candidates[:max_new]:
-                    adt = adt_map.get(cand['code'], 0)
+                    # Point-in-Time ADT lookup
+                    date_adt = adt_map.get(current_date, {})
+                    adt = date_adt.get(cand['code'], 0)
                     impact, executable = self.almgren.calculate_single(adj_size, adt)
 
                     if not executable:
@@ -558,11 +625,25 @@ class BacktesterV3Optimized:
         return result
 
     def _load_data(self, start_date: str, end_date: str):
+        # Calculate lookback start date for ADT calculation (90 days before start)
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        adt_lookback_start = (start_dt - pd.Timedelta(days=120)).strftime("%Y-%m-%d")
+
+        # Load prices with ADT lookback period
         prices = pd.read_sql_query(
             "SELECT code, date, close, turnover, adjustment_close FROM daily_quotes WHERE date BETWEEN ? AND ? ORDER BY date, code",
-            self.conn, params=[start_date, end_date]
+            self.conn, params=[adt_lookback_start, end_date]
         )
         prices['price'] = prices['adjustment_close'].fillna(prices['close'])
+        # Fill NaN turnover with 0
+        prices['turnover'] = prices['turnover'].fillna(0)
+        # Remove rows with invalid prices
+        prices = prices[prices['price'].notna() & (prices['price'] > 0)]
+
+        # Mark which rows are in the actual trading period
+        prices['in_period'] = prices['date'] >= start_date
+
+        logger.info(f"Loaded data from {adt_lookback_start} to {end_date} ({len(prices)} rows, {prices['in_period'].sum()} in trading period)")
 
         fins = pd.read_sql_query(
             "SELECT code, disclosed_date, bps, roe FROM financial_statements WHERE bps > 0 ORDER BY code, disclosed_date",
@@ -570,11 +651,49 @@ class BacktesterV3Optimized:
         )
         return prices, fins
 
-    def _calc_adt(self, df: pd.DataFrame) -> Tuple[Dict, set]:
-        adt_df = df.groupby('code')['turnover'].apply(lambda x: x.tail(60).mean() if len(x) >= 20 else 0)
-        adt_map = adt_df.to_dict()
-        tradeable = {code for code, adt in adt_map.items() if adt >= self.min_adt}
-        return adt_map, tradeable
+    def _calc_adt(self, df: pd.DataFrame) -> Tuple[Dict[str, Dict[str, float]], set]:
+        """
+        Point-in-Time ADT calculation - returns ADT by date and code.
+        This ensures no future data leakage in liquidity assessment.
+        """
+        # Sort by code and date
+        df_sorted = df.sort_values(['code', 'date'])
+
+        # Calculate rolling ADT for each code (Point-in-Time)
+        adt_by_date_code = {}
+        all_codes = set()
+
+        # Minimum days needed - use 3 for short periods, but prefer 10+
+        min_days_required = 3
+
+        for code, group in df_sorted.groupby('code'):
+            group = group.sort_values('date')
+            turnover_values = group['turnover'].fillna(0).values
+            dates = group['date'].values
+
+            # Rolling mean with lookback window
+            for i, (d, tv) in enumerate(zip(dates, turnover_values)):
+                start_idx = max(0, i - self.adt_lookback + 1)
+                window = turnover_values[start_idx:i+1]
+
+                # Use available data, minimum 3 days (or current day value as fallback)
+                if len(window) >= min_days_required:
+                    adt_val = float(np.mean(window))
+                elif len(window) > 0:
+                    # For very short periods, use available data with higher threshold
+                    adt_val = float(np.mean(window))
+                else:
+                    adt_val = 0.0
+
+                if d not in adt_by_date_code:
+                    adt_by_date_code[d] = {}
+                adt_by_date_code[d][code] = adt_val
+
+                if adt_val >= self.min_adt:
+                    all_codes.add(code)
+
+        logger.info(f"PIT ADT computed: {len(adt_by_date_code)} dates, {len(all_codes)} tradeable codes")
+        return adt_by_date_code, all_codes
 
     def _build_price_index(self, df: pd.DataFrame) -> Dict:
         return {d: dict(zip(g['code'], g['price'])) for d, g in df.groupby('date')}
@@ -582,15 +701,16 @@ class BacktesterV3Optimized:
     def _build_fins_index(self, df: pd.DataFrame) -> Dict:
         return {code: g.sort_values('disclosed_date') for code, g in df.groupby('code')}
 
-    def _find_candidates_fast(self, eval_date, price_dict, fins_idx, tradeable, adt_map) -> List[Dict]:
-        """Fast candidate selection using vectorized operations"""
+    def _find_candidates_fast(self, eval_date, price_dict, fins_idx, tradeable, date_adt) -> List[Dict]:
+        """Fast candidate selection using vectorized operations with PIT data"""
         stocks = []
 
         for code in tradeable:
             if code not in price_dict:
                 continue
             price = price_dict[code]
-            if not price or price <= 0:
+            # NaN guard for price
+            if price is None or not np.isfinite(price) or price <= 0:
                 continue
             if code not in fins_idx:
                 continue
@@ -604,10 +724,15 @@ class BacktesterV3Optimized:
             bps = latest['bps']
             roe = latest['roe'] if pd.notna(latest['roe']) else 0
 
-            if not bps or bps <= 0:
+            # NaN guard for bps
+            if bps is None or not np.isfinite(bps) or bps <= 0:
                 continue
 
             pbr = price / bps
+            # NaN guard for pbr
+            if not np.isfinite(pbr):
+                continue
+
             stocks.append({'code': code, 'price': price, 'pbr': pbr, 'roe': roe})
 
         if not stocks:
@@ -632,55 +757,100 @@ class BacktesterV3Optimized:
         return candidates
 
     def _calculate_results(self, equity_arr, dd_arr, trades, impacts, dates) -> Dict:
-        final = equity_arr[-1]
-        total_ret = (final / self.initial_capital) - 1
-        n_years = len(equity_arr) / 252
-        annual_ret = (1 + total_ret) ** (1/n_years) - 1 if n_years > 0 else 0
+        """Calculate results with robust NaN handling"""
+        # Guard against empty or invalid equity array
+        equity_arr = np.nan_to_num(equity_arr, nan=self.initial_capital, posinf=self.initial_capital, neginf=0)
 
-        daily_ret = np.diff(equity_arr) / equity_arr[:-1]
-        daily_ret = np.nan_to_num(daily_ret)
-        vol = np.std(daily_ret) * np.sqrt(252)
-        sharpe = (annual_ret - 0.001) / vol if vol > 0 else 0
+        final = equity_arr[-1] if len(equity_arr) > 0 else self.initial_capital
+        if final <= 0 or not np.isfinite(final):
+            final = self.initial_capital
+
+        total_ret = (final / self.initial_capital) - 1
+        total_ret = 0.0 if not np.isfinite(total_ret) else total_ret
+
+        n_years = len(equity_arr) / 252
+        if n_years > 0 and (1 + total_ret) > 0:
+            annual_ret = (1 + total_ret) ** (1/n_years) - 1
+        else:
+            annual_ret = 0.0
+        annual_ret = 0.0 if not np.isfinite(annual_ret) else annual_ret
+
+        # Safe daily return calculation
+        with np.errstate(divide='ignore', invalid='ignore'):
+            daily_ret = np.diff(equity_arr) / np.where(equity_arr[:-1] > 0, equity_arr[:-1], 1)
+        daily_ret = np.nan_to_num(daily_ret, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Volatility with DoF check
+        if len(daily_ret) > 1:
+            vol = float(np.std(daily_ret, ddof=1)) * np.sqrt(252)
+        else:
+            vol = 0.0
+        vol = 0.0 if not np.isfinite(vol) or vol <= 0 else vol
+
+        sharpe = (annual_ret - 0.001) / vol if vol > 0.001 else 0.0
+        sharpe = 0.0 if not np.isfinite(sharpe) else sharpe
 
         neg = daily_ret[daily_ret < 0]
-        down_vol = np.std(neg) * np.sqrt(252) if len(neg) > 0 else vol
-        sortino = (annual_ret - 0.001) / down_vol if down_vol > 0 else 0
+        if len(neg) > 1:
+            down_vol = float(np.std(neg, ddof=1)) * np.sqrt(252)
+        else:
+            down_vol = vol
+        down_vol = vol if not np.isfinite(down_vol) or down_vol <= 0 else down_vol
 
-        max_dd = np.max(dd_arr)
-        calmar = annual_ret / max_dd if max_dd > 0 else 0
+        sortino = (annual_ret - 0.001) / down_vol if down_vol > 0.001 else 0.0
+        sortino = 0.0 if not np.isfinite(sortino) else sortino
+
+        max_dd = float(np.nanmax(dd_arr)) if len(dd_arr) > 0 else 0.0
+        max_dd = 0.0 if not np.isfinite(max_dd) else max_dd
+
+        calmar = annual_ret / max_dd if max_dd > 0.001 else 0.0
+        calmar = 0.0 if not np.isfinite(calmar) else calmar
 
         if trades:
-            pnls = np.array([t['pnl'] for t in trades])
-            win_rate = np.mean(pnls > 0)
-            wins = np.sum(pnls[pnls > 0])
-            losses = np.abs(np.sum(pnls[pnls <= 0]))
-            pf = wins / losses if losses > 0 else float('inf')
-            avg_hold = np.mean([
-                (datetime.strptime(t['exit_date'], "%Y-%m-%d") -
-                 datetime.strptime(t['entry_date'], "%Y-%m-%d")).days
-                for t in trades
-            ])
+            # Filter out trades with NaN pnl
+            valid_trades = [t for t in trades if np.isfinite(t.get('pnl', 0))]
+            if valid_trades:
+                pnls = np.array([t['pnl'] for t in valid_trades])
+                win_rate = float(np.mean(pnls > 0))
+                wins = float(np.sum(pnls[pnls > 0]))
+                losses = float(np.abs(np.sum(pnls[pnls <= 0])))
+                pf = wins / losses if losses > 0 else (10.0 if wins > 0 else 0.0)
+                avg_hold = np.mean([
+                    (datetime.strptime(t['exit_date'], "%Y-%m-%d") -
+                     datetime.strptime(t['entry_date'], "%Y-%m-%d")).days
+                    for t in valid_trades
+                ])
+            else:
+                win_rate = pf = avg_hold = 0.0
         else:
-            win_rate = pf = avg_hold = 0
+            win_rate = pf = avg_hold = 0.0
 
-        avg_impact = np.mean(impacts) if impacts else 0
+        avg_impact = float(np.mean(impacts)) if impacts else 0.0
+        avg_impact = 0.0 if not np.isfinite(avg_impact) else avg_impact
+
         wf = self.walk_forward.analyze()
+
+        # Final safety checks - replace any remaining NaN/Inf with 0
+        def safe_round(val, decimals):
+            if val is None or not np.isfinite(val):
+                return 0.0
+            return round(float(val), decimals)
 
         return {
             'strategy': 'Asset Shield V3 (Optimized)',
-            'total_return': round(total_ret, 6),
-            'annual_return': round(annual_ret, 6),
-            'final_equity': round(final, 0),
-            'sharpe_ratio': round(sharpe, 4),
-            'sortino_ratio': round(sortino, 4),
-            'max_drawdown': round(max_dd, 6),
-            'calmar_ratio': round(calmar, 4),
-            'volatility': round(vol, 6),
+            'total_return': safe_round(total_ret, 6),
+            'annual_return': safe_round(annual_ret, 6),
+            'final_equity': safe_round(final, 0),
+            'sharpe_ratio': safe_round(sharpe, 4),
+            'sortino_ratio': safe_round(sortino, 4),
+            'max_drawdown': safe_round(max_dd, 6),
+            'calmar_ratio': safe_round(calmar, 4),
+            'volatility': safe_round(vol, 6),
             'total_trades': len(trades),
-            'win_rate': round(win_rate, 4),
-            'profit_factor': round(pf, 4),
-            'avg_holding_days': round(avg_hold, 1),
-            'avg_impact_bps': round(avg_impact, 2),
+            'win_rate': safe_round(win_rate, 4),
+            'profit_factor': safe_round(pf, 4),
+            'avg_holding_days': safe_round(avg_hold, 1),
+            'avg_impact_bps': safe_round(avg_impact, 2),
             'walk_forward': wf,
             'almgren_calculations': self.almgren._calc_count
         }
