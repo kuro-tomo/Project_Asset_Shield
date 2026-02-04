@@ -44,6 +44,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from shield.alpha_model import MarketImpactParams
+
 # Project setup
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src'))
@@ -556,6 +558,10 @@ class AlphaRelaxationBacktester:
     def __init__(self, cache_path: str, initial_capital: float = 10_000_000):
         self.cache_path = cache_path
         self.conn = sqlite3.connect(cache_path)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA cache_size=20000")
+        self.conn.execute("PRAGMA temp_store=MEMORY")
         self.initial_capital = initial_capital
 
         # Initialize components
@@ -563,6 +569,12 @@ class AlphaRelaxationBacktester:
         self.almgren_chriss = AlmgrenChrissModel(self.audit)
         self.walk_forward = WalkForwardValidator(self.audit)
         self.risk_buffer = RiskBuffer(initial_capital, self.audit)
+
+        # Reference params from production impact model (for mismatch auditing)
+        self._impact_params_ref = MarketImpactParams()
+
+        # Sector map for concentration diagnostics (if listed_info is available)
+        self._sector_map = self._load_sector_map()
 
         # Strategy parameters (V3 configuration)
         self.max_positions = 15          # Concentrated portfolio
@@ -593,6 +605,16 @@ class AlphaRelaxationBacktester:
             "take_profit": self.take_profit
         })
 
+        logger.info(
+            "ImpactModel mismatch audit: backtest uses local AlmgrenChrissModel; "
+            "prod MarketImpactParams(gamma=%.4f, eta=%.4f, sigma=%.4f, max_participation=%.2f, spread_bps=%.2f)",
+            self._impact_params_ref.gamma,
+            self._impact_params_ref.eta,
+            self._impact_params_ref.sigma,
+            self._impact_params_ref.max_participation_rate,
+            self._impact_params_ref.spread_bps,
+        )
+
     def run(self, start_date: str = "2008-01-01", end_date: str = "2026-01-31") -> Dict:
         """Execute backtest and return results"""
         logger.info("=" * 70)
@@ -608,6 +630,9 @@ class AlphaRelaxationBacktester:
         # Calculate ADT and filter tradeable stocks
         logger.info("Calculating ADT...")
         adt_map, tradeable_codes = self._calculate_adt(prices_df)
+
+        # Diagnostics: detect potential look-ahead in ADT computation
+        self._log_adt_lookahead(prices_df, adt_map, trading_dates_sample=5)
 
         # Build indices
         logger.info("Building indices...")
@@ -737,14 +762,20 @@ class AlphaRelaxationBacktester:
             else:
                 max_new = self.max_positions - len(positions)
 
-            # Open new positions
-            if max_new > 0:
-                base_size = equity * self.position_pct
-                adj_size = base_size * self.risk_buffer.get_position_multiplier()
+        # Open new positions
+        if max_new > 0:
+            base_size = equity * self.position_pct
+            adj_size = base_size * self.risk_buffer.get_position_multiplier()
 
-                candidates = self._find_candidates_percentile(
-                    current_date, price_dict, fins_index, tradeable_codes, adt_map
-                )
+            # Use point-in-time ADT to avoid look-ahead in candidate filtering
+            adt_map_pt = self._calculate_adt_point_in_time(prices_df, current_date)
+            tradeable_codes_pt = {
+                code for code, adt in adt_map_pt.items() if adt >= self.min_adt
+            }
+
+            candidates = self._find_candidates_percentile(
+                current_date, price_dict, fins_index, tradeable_codes_pt, adt_map_pt
+            )
 
                 held_codes = {p['code'] for p in positions}
                 candidates = [c for c in candidates if c['code'] not in held_codes]
@@ -854,7 +885,27 @@ class AlphaRelaxationBacktester:
             "min_adt_threshold": self.min_adt
         })
 
+        logger.warning(
+            "ADT calculated on full dataset (tail(60) per code). "
+            "This is NOT point-in-time and may introduce look-ahead bias."
+        )
+
         return adt_map, tradeable
+
+    def _calculate_adt_point_in_time(
+        self,
+        prices_df: pd.DataFrame,
+        as_of_date: str,
+        lookback: int = 60
+    ) -> Dict[str, float]:
+        """Calculate point-in-time ADT as of a given date to avoid look-ahead."""
+        df_slice = prices_df[prices_df['date'] <= as_of_date]
+        if df_slice.empty:
+            return {}
+        adt_df = df_slice.groupby('code').agg({
+            'turnover': lambda x: x.tail(lookback).mean() if len(x) >= 20 else 0
+        }).reset_index()
+        return dict(zip(adt_df['code'], adt_df['turnover']))
 
     def _build_price_index(self, prices_df: pd.DataFrame) -> Dict:
         """Build date-indexed price lookup"""
@@ -863,6 +914,104 @@ class AlphaRelaxationBacktester:
     def _build_fins_index(self, fins_df: pd.DataFrame) -> Dict:
         """Build code-indexed financial data lookup"""
         return {code: g.sort_values('disclosed_date') for code, g in fins_df.groupby('code')}
+
+    def _load_sector_map(self) -> Dict[str, str]:
+        """Load sector33_code map for concentration diagnostics"""
+        try:
+            df = pd.read_sql_query(
+                "SELECT code, sector33_code FROM listed_info",
+                self.conn
+            )
+            if df.empty:
+                return {}
+            return dict(zip(df['code'], df['sector33_code']))
+        except Exception as e:
+            logger.warning("Sector map unavailable: %s", e)
+            return {}
+
+    def _log_sector_concentration(self, eval_date: str, candidates_df: pd.DataFrame, tradeable_codes: set) -> None:
+        """Log sector concentration for candidate set vs universe."""
+        if not self._sector_map or candidates_df.empty:
+            return
+
+        candidates_df = candidates_df.copy()
+        candidates_df['sector33'] = candidates_df['code'].map(self._sector_map)
+        sector_counts = candidates_df['sector33'].value_counts(dropna=False)
+        top_sector = sector_counts.index[0]
+        top_share = sector_counts.iloc[0] / len(candidates_df)
+
+        universe_sectors = [self._sector_map.get(code) for code in tradeable_codes]
+        universe_counts = pd.Series(universe_sectors).value_counts(dropna=False)
+        universe_top = universe_counts.index[0] if len(universe_counts) > 0 else None
+        universe_top_share = (
+            universe_counts.iloc[0] / len(universe_sectors)
+            if len(universe_counts) > 0 else 0
+        )
+
+        logger.info(
+            "[SectorConcentration] date=%s candidates=%d top_sector=%s share=%.2f "
+            "| universe_top=%s share=%.2f | sectors=%d",
+            eval_date,
+            len(candidates_df),
+            str(top_sector),
+            top_share,
+            str(universe_top),
+            universe_top_share,
+            sector_counts.shape[0]
+        )
+
+    def _log_adt_lookahead(
+        self,
+        prices_df: pd.DataFrame,
+        adt_map: Dict[str, float],
+        trading_dates_sample: int = 5,
+        sample_codes: int = 200
+    ) -> None:
+        """Log diagnostics for potential look-ahead in ADT calculations."""
+        try:
+            trading_dates = sorted(prices_df['date'].unique())
+            if not trading_dates:
+                return
+
+            step = max(1, len(trading_dates) // trading_dates_sample)
+            sampled_dates = trading_dates[::step][:trading_dates_sample]
+
+            codes = list(adt_map.keys())
+            if len(codes) == 0:
+                return
+
+            rng = np.random.default_rng(42)
+            sampled_codes = rng.choice(codes, size=min(sample_codes, len(codes)), replace=False)
+
+            for d in sampled_dates:
+                df_slice = prices_df[prices_df['date'] <= d]
+                if df_slice.empty:
+                    continue
+
+                adt_slice = df_slice.groupby('code').agg({
+                    'turnover': lambda x: x.tail(60).mean() if len(x) >= 20 else 0
+                }).reset_index()
+                adt_slice_map = dict(zip(adt_slice['code'], adt_slice['turnover']))
+
+                diffs = []
+                for code in sampled_codes:
+                    if code not in adt_slice_map:
+                        continue
+                    full_val = adt_map.get(code, 0)
+                    slice_val = adt_slice_map.get(code, 0)
+                    if full_val > 0:
+                        diffs.append(abs(full_val - slice_val) / full_val)
+
+                if diffs:
+                    logger.warning(
+                        "[ADTLookaheadCheck] date=%s mean_abs_diff=%.3f p95=%.3f n=%d",
+                        d,
+                        float(np.mean(diffs)),
+                        float(np.quantile(diffs, 0.95)),
+                        len(diffs)
+                    )
+        except Exception as e:
+            logger.warning("ADT look-ahead diagnostics failed: %s", e)
 
     def _find_candidates_percentile(self, eval_date: str, price_dict: Dict,
                                      fins_index: Dict, tradeable_codes: set,
@@ -933,6 +1082,17 @@ class AlphaRelaxationBacktester:
             'composite_score', ascending=False
         )
 
+        # Sector concentration diagnostics (if sector map available)
+        self._log_sector_concentration(eval_date, candidates_df, tradeable_codes)
+
+        # Vectorization diagnostics for 14.9M scale
+        logger.info(
+            "[Vectorization] eval_date=%s universe=%d candidates=%d",
+            eval_date,
+            len(tradeable_codes),
+            len(candidates_df)
+        )
+
         return [
             {
                 'code': row['code'],
@@ -980,6 +1140,19 @@ class AlphaRelaxationBacktester:
         avg_impact = np.mean(impact_records) if impact_records else 0
         wf_result = self.walk_forward.analyze()
 
+        # Sector concentration summary (if available)
+        sector_summary = None
+        if self._sector_map and trades:
+            sector_series = pd.Series([self._sector_map.get(t['code']) for t in trades])
+            sector_counts = sector_series.value_counts(dropna=False)
+            top_sector = sector_counts.index[0] if len(sector_counts) > 0 else None
+            top_share = sector_counts.iloc[0] / len(sector_series) if len(sector_series) > 0 else 0
+            sector_summary = {
+                "unique_sectors": int(sector_counts.shape[0]),
+                "top_sector": str(top_sector),
+                "top_sector_share": round(float(top_share), 4)
+            }
+
         return {
             'strategy': 'Alpha Relaxation (Percentile-based PBR/ROE)',
             'total_return': round(total_return, 6),
@@ -998,6 +1171,12 @@ class AlphaRelaxationBacktester:
             'max_aum_supported_b': 30.0,
             'walk_forward': wf_result,
             'almgren_chriss_stats': self.almgren_chriss.get_stats(),
+            'sector_concentration': sector_summary,
+            'audit_notes': {
+                'adt_point_in_time': True,
+                'impact_model_mismatch_logged': True,
+                'db_pragma_optimized': True
+            },
             'selection_criteria': {
                 'type': 'percentile',
                 'pbr_percentile': self.pbr_percentile,
@@ -1046,6 +1225,19 @@ class AlphaRelaxationBacktester:
         print("\n[Capacity Analysis - Almgren-Chriss]")
         print(f"  Target AUM: {result['max_aum_supported_b']:.0f}B JPY")
         print(f"  Avg Impact: {result['avg_impact_bps']:.1f} bps")
+
+        if result.get('sector_concentration'):
+            sc = result['sector_concentration']
+            print("\n[Sector Concentration Summary]")
+            print(f"  Unique Sectors: {sc['unique_sectors']}")
+            print(f"  Top Sector: {sc['top_sector']} (share {sc['top_sector_share']:.2%})")
+
+        if result.get('audit_notes'):
+            notes = result['audit_notes']
+            print("\n[Audit Notes]")
+            print(f"  ADT point-in-time: {notes.get('adt_point_in_time')}")
+            print(f"  Impact model mismatch logged: {notes.get('impact_model_mismatch_logged')}")
+            print(f"  DB PRAGMA optimized: {notes.get('db_pragma_optimized')}")
 
         print("\n[Walk-Forward Validation]")
         print(f"  Training (2007-2015):")

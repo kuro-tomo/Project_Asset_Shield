@@ -108,6 +108,10 @@ class MarketImpactModel:
         "afternoon_mid": 0.7,  # 13:00-14:30
         "closing": 2.0       # Last 30 min
     }
+
+    # Safety floors (prevent zero/negative inputs from collapsing impact)
+    MIN_SIGMA = 1e-6
+    MIN_EXECUTION_HORIZON_DAYS = 0.25
     
     def __init__(self, params: Optional[MarketImpactParams] = None):
         """
@@ -134,6 +138,18 @@ class MarketImpactModel:
             adv: Average Daily Volume (shares)
             volatility: Annualized volatility
         """
+        if adv <= 0:
+            logger.warning(
+                "MarketImpactModel.set_stock_data: adv<=0 for %s (adv=%s). Impact calc may be disabled.",
+                code,
+                adv,
+            )
+        if volatility is not None and volatility <= 0:
+            logger.warning(
+                "MarketImpactModel.set_stock_data: volatility<=0 for %s (volatility=%s). Risk terms may collapse.",
+                code,
+                volatility,
+            )
         self._adv_cache[code] = adv
         self._volatility_cache[code] = volatility
 
@@ -160,6 +176,17 @@ class MarketImpactModel:
         # Assuming average price of 2000 JPY for conversion
         estimated_price = 2000
         estimated_adv = adt_20d / estimated_price if adt_20d > 0 else 0
+
+        if adt_20d <= 0:
+            logger.warning(
+                "MarketImpactModel.set_adt_data: adt_20d<=0 for %s (adt_20d=%s). Capacity will be zero.",
+                code,
+                adt_20d,
+            )
+        if adt_60d is not None and adt_60d <= 0:
+            logger.warning(
+                "MarketImpactModel.set_adt_data: adt_60d<=0 for %s (adt_60d=%s).", code, adt_60d
+            )
 
         self._adv_cache[code] = estimated_adv
         self._adt_cache = getattr(self, '_adt_cache', {})
@@ -216,6 +243,11 @@ class MarketImpactModel:
         adt = self.get_adt(code, 20)
 
         if adt <= 0:
+            logger.warning(
+                "MarketImpactModel.calculate_capacity_adjusted_size: ADT<=0 for %s (adt=%s).",
+                code,
+                adt,
+            )
             return (0, float('inf'), False)
 
         # Capacity constraint
@@ -256,7 +288,8 @@ class MarketImpactModel:
         self,
         order_size: int,
         adv: float,
-        price: float
+        price: float,
+        sigma: Optional[float] = None
     ) -> float:
         """
         Calculate permanent price impact (information leakage).
@@ -275,10 +308,21 @@ class MarketImpactModel:
             Permanent impact in basis points
         """
         if adv <= 0 or price <= 0:
+            logger.warning(
+                "MarketImpactModel.calculate_permanent_impact: adv<=0 or price<=0 (adv=%s, price=%s). Returning 0.",
+                adv,
+                price,
+            )
             return 0.0
             
         participation = order_size / adv
-        sigma = self._volatility_cache.get("default", self.params.sigma)
+        sigma = sigma if sigma is not None else self._volatility_cache.get("default", self.params.sigma)
+        if sigma <= 0:
+            logger.warning(
+                "MarketImpactModel.calculate_permanent_impact: sigma<=0 (sigma=%s). Returning 0.",
+                sigma,
+            )
+            return 0.0
         
         # Square root model for permanent impact
         impact = self.params.gamma * sigma * math.sqrt(participation)
@@ -291,7 +335,8 @@ class MarketImpactModel:
         order_size: int,
         adv: float,
         price: float,
-        execution_horizon_days: float = 1.0
+        execution_horizon_days: float = 1.0,
+        sigma: Optional[float] = None
     ) -> float:
         """
         Calculate temporary price impact (execution pressure).
@@ -311,11 +356,23 @@ class MarketImpactModel:
             Temporary impact in basis points
         """
         if adv <= 0 or price <= 0 or execution_horizon_days <= 0:
+            logger.warning(
+                "MarketImpactModel.calculate_temporary_impact: invalid inputs (adv=%s, price=%s, horizon=%s). Returning 0.",
+                adv,
+                price,
+                execution_horizon_days,
+            )
             return 0.0
             
         # Participation rate over execution horizon
         participation_rate = order_size / (adv * execution_horizon_days)
-        sigma = self._volatility_cache.get("default", self.params.sigma)
+        sigma = sigma if sigma is not None else self._volatility_cache.get("default", self.params.sigma)
+        if sigma <= 0:
+            logger.warning(
+                "MarketImpactModel.calculate_temporary_impact: sigma<=0 (sigma=%s). Returning 0.",
+                sigma,
+            )
+            return 0.0
         
         # Power law model for temporary impact
         impact = self.params.eta * sigma * (participation_rate ** 0.6)
@@ -360,12 +417,25 @@ class MarketImpactModel:
         warnings = []
         
         # Get ADV (use cache or estimate)
-        adv = self._adv_cache.get(code, order_size * 10)  # Default: assume 10x order
-        if code not in self._adv_cache:
+        adv = self._adv_cache.get(code, None)
+        if adv is None or adv <= 0:
+            adv = max(order_size * 10, 1)
             warnings.append(f"ADV not available for {code}, using estimate")
+            warnings.append(f"ADV not available for {code}, using estimate")
+            logger.warning(
+                "MarketImpactModel.estimate_total_impact: missing ADV for %s. Using estimate adv=%s.",
+                code,
+                adv,
+            )
         
         # Calculate participation rate
         participation_rate = order_size / adv if adv > 0 else 1.0
+        if adv <= 0:
+            logger.warning(
+                "MarketImpactModel.estimate_total_impact: adv<=0 for %s (adv=%s). Participation forced to 1.0.",
+                code,
+                adv,
+            )
         
         # Check participation limit
         if participation_rate > self.params.max_participation_rate:
@@ -382,17 +452,47 @@ class MarketImpactModel:
             "URGENT": 0.25
         }
         base_horizon = urgency_horizons.get(urgency, 1.0)
+        if base_horizon <= 0:
+            logger.warning(
+                "MarketImpactModel.estimate_total_impact: base_horizon<=0 for %s (urgency=%s, base_horizon=%s).",
+                code,
+                urgency,
+                base_horizon,
+            )
         
         # Adjust horizon for large orders
         if participation_rate > 0.05:
             optimal_horizon = max(base_horizon, participation_rate / 0.05)
         else:
             optimal_horizon = base_horizon
+        if optimal_horizon < 1.0:
+            logger.warning(
+                "MarketImpactModel.estimate_total_impact: optimal_horizon<1d for %s (optimal_horizon=%s).",
+                code,
+                optimal_horizon,
+            )
+        optimal_horizon = max(optimal_horizon, self.MIN_EXECUTION_HORIZON_DAYS)
+        if optimal_horizon <= 0:
+            logger.warning(
+                "MarketImpactModel.estimate_total_impact: optimal_horizon<=0 for %s (optimal_horizon=%s).",
+                code,
+                optimal_horizon,
+            )
+
+        # Volatility selection with safety floor
+        sigma = self._volatility_cache.get(code, self.params.sigma)
+        if sigma is None or sigma <= 0:
+            logger.warning(
+                "MarketImpactModel.estimate_total_impact: sigma<=0 or missing for %s (sigma=%s). Using fallback.",
+                code,
+                sigma,
+            )
+            sigma = self.params.sigma if self.params.sigma > 0 else self.MIN_SIGMA
         
         # Calculate impact components
-        permanent_impact = self.calculate_permanent_impact(order_size, adv, price)
+        permanent_impact = self.calculate_permanent_impact(order_size, adv, price, sigma)
         temporary_impact = self.calculate_temporary_impact(
-            order_size, adv, price, optimal_horizon
+            order_size, adv, price, optimal_horizon, sigma
         )
         spread_cost = self.calculate_spread_cost(price)
         
