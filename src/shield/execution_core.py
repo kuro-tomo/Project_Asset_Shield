@@ -1,5 +1,5 @@
 """
-Execution Core for Asset Shield V2
+Execution Core for Asset Shield V3.2
 Layer 3: Execution (Stealth Algo)
 
 Implements market impact minimization through:
@@ -7,6 +7,9 @@ Implements market impact minimization through:
 - TWAP (Time Weighted Average Price) execution
 - Almgren-Chriss optimal execution model
 - TSE tick size rules compliance
+
+V3.2.0: SYNCHRONIZED Almgren-Chriss parameters with alpha_model.py
+        All impact calculations now use UNIFIED_AC_PARAMS
 """
 
 import logging
@@ -16,6 +19,9 @@ from typing import Optional, Dict, List, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
+
+# Import unified parameters from alpha_model
+from shield.alpha_model import UNIFIED_AC_PARAMS, UnifiedACParams
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -192,28 +198,55 @@ class TSETickSizeManager:
 
 class AlmgrenChrissModel:
     """
-    Almgren-Chriss Optimal Execution Model
-    
+    Almgren-Chriss Optimal Execution Model - V3.2.0 SYNCHRONIZED
+
     Minimizes execution cost = market impact + timing risk
-    
-    Parameters:
-    - sigma: Daily volatility
+
+    V3.2.0: Parameters now synchronized with UNIFIED_AC_PARAMS from alpha_model.py
+            All modules use identical impact coefficients for 100% consistency.
+
+    Parameters (from UNIFIED_AC_PARAMS):
+    - sigma: Daily volatility (converted from annualized)
     - eta: Temporary impact coefficient
     - gamma: Permanent impact coefficient
     - lambda_: Risk aversion parameter
     """
-    
+
     def __init__(
         self,
-        sigma: float = 0.02,      # 2% daily vol
-        eta: float = 0.0001,      # Temporary impact
-        gamma: float = 0.00005,   # Permanent impact
-        lambda_: float = 0.001    # Risk aversion
+        sigma: float = None,
+        eta: float = None,
+        gamma: float = None,
+        lambda_: float = None,
+        use_unified: bool = True
     ):
-        self.sigma = sigma
-        self.eta = eta
-        self.gamma = gamma
-        self.lambda_ = lambda_
+        """
+        Initialize AC model with synchronized parameters.
+
+        Args:
+            sigma: Daily volatility (if None, uses UNIFIED_AC_PARAMS.sigma_daily)
+            eta: Temporary impact (if None, uses UNIFIED_AC_PARAMS.eta)
+            gamma: Permanent impact (if None, uses UNIFIED_AC_PARAMS.gamma)
+            lambda_: Risk aversion (if None, uses UNIFIED_AC_PARAMS.lambda_risk)
+            use_unified: If True, source defaults from UNIFIED_AC_PARAMS
+        """
+        if use_unified:
+            # Use UNIFIED parameters as defaults for 100% consistency
+            self.sigma = sigma if sigma is not None else UNIFIED_AC_PARAMS.sigma_daily
+            self.eta = eta if eta is not None else UNIFIED_AC_PARAMS.eta
+            self.gamma = gamma if gamma is not None else UNIFIED_AC_PARAMS.gamma
+            self.lambda_ = lambda_ if lambda_ is not None else UNIFIED_AC_PARAMS.lambda_risk
+        else:
+            # Legacy defaults (deprecated)
+            self.sigma = sigma if sigma is not None else 0.02
+            self.eta = eta if eta is not None else 0.0001
+            self.gamma = gamma if gamma is not None else 0.00005
+            self.lambda_ = lambda_ if lambda_ is not None else 0.001
+
+        logger.info(
+            f"AlmgrenChrissModel initialized: sigma={self.sigma:.4f} (daily), "
+            f"eta={self.eta:.4f}, gamma={self.gamma:.4f}, lambda={self.lambda_:.2e}"
+        )
         
     def optimal_trajectory(
         self,

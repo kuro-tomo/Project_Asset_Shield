@@ -1,14 +1,17 @@
 """
-Capacity Engine for Asset Shield Phase 2
+Capacity Engine for Asset Shield V3.2
 30 Billion JPY AUM Feasibility Proof
 
 Implements:
 - ADT (Average Daily Turnover) calculation from DB turnover field
-- Almgren-Chriss market impact model
+- Almgren-Chriss market impact model (SYNCHRONIZED with alpha_model.py)
 - Portfolio capacity validation for institutional-scale AUM
 
-Author: Asset Shield V2 Team
-Version: 2.0.0 (2026-02-03)
+V3.2.0: All impact parameters now sourced from UNIFIED_AC_PARAMS
+        for 100% consistency across backtest and execution.
+
+Author: Asset Shield V3 Team
+Version: 3.2.0 (2026-02-04)
 """
 
 import logging
@@ -18,6 +21,9 @@ from datetime import datetime, date
 from typing import Optional, Dict, List, Tuple, Any
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+
+# Import unified parameters from alpha_model
+from shield.alpha_model import UNIFIED_AC_PARAMS, UnifiedACParams
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -68,26 +74,36 @@ class CapacityReport:
 @dataclass
 class AlmgrenChrissParams:
     """
-    Almgren-Chriss Market Impact Model Parameters
+    Almgren-Chriss Market Impact Model Parameters - V3.2.0 SYNCHRONIZED
 
     Based on:
     - Almgren, R., & Chriss, N. (2000). Optimal execution of portfolio transactions.
     - Conservative calibration for Japanese equity markets.
+
+    V3.2.0: Now sources from UNIFIED_AC_PARAMS for 100% consistency
+            across alpha_model.py, execution_core.py, and capacity_engine.py
     """
-    gamma: float = 0.15              # Permanent impact (conservative: 0.15 vs standard 0.1)
-    eta: float = 0.02                # Temporary impact (conservative: 0.02 vs standard 0.01)
-    sigma: float = 0.25              # Annualized volatility assumption
-    spread_bps: float = 10.0         # Half bid-ask spread
+    gamma: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.gamma)
+    eta: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.eta)
+    sigma: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.sigma_annual)
+    spread_bps: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.spread_bps)
+
+    @classmethod
+    def from_unified(cls, params: UnifiedACParams = None) -> 'AlmgrenChrissParams':
+        """Create from unified parameters (recommended)"""
+        p = params or UNIFIED_AC_PARAMS
+        return cls(gamma=p.gamma, eta=p.eta, sigma=p.sigma_annual, spread_bps=p.spread_bps)
 
     @classmethod
     def conservative(cls) -> 'AlmgrenChrissParams':
         """Conservative parameters for impact estimation"""
-        return cls(gamma=0.15, eta=0.02, sigma=0.30, spread_bps=15.0)
+        p = UnifiedACParams.conservative()
+        return cls(gamma=p.gamma, eta=p.eta, sigma=p.sigma_annual, spread_bps=p.spread_bps)
 
     @classmethod
     def standard(cls) -> 'AlmgrenChrissParams':
-        """Standard parameters for impact estimation"""
-        return cls(gamma=0.10, eta=0.01, sigma=0.25, spread_bps=10.0)
+        """Standard parameters for impact estimation (UNIFIED)"""
+        return cls.from_unified(UNIFIED_AC_PARAMS)
 
 
 # =============================================================================

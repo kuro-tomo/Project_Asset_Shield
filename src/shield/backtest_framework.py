@@ -1,5 +1,5 @@
 """
-Backtest Framework for Asset Shield V2
+Backtest Framework for Asset Shield V3.2
 20-Year Multi-Regime Verification (4-Phase Stress Test)
 
 Implements survivorship-bias-free backtesting with:
@@ -7,6 +7,11 @@ Implements survivorship-bias-free backtesting with:
 - Phase 2 (2011-2015): Expansion Test (Abenomics)
 - Phase 3 (2016-2020): OOS Stability (COVID Shock)
 - Phase 4 (2021-2026): Modern Adaptation (Inflation/Rate Rise)
+
+V3.2.0 Institutional Enhancements:
+- STRICT SECTOR NEUTRALIZATION with 20% max exposure cap
+- UNIFIED Almgren-Chriss parameters
+- QuantConnect/Quantiacs compliance
 """
 
 import logging
@@ -16,6 +21,12 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 import numpy as np
 from collections import defaultdict
+
+# Import unified parameters and sector neutralizer
+from shield.alpha_model import (
+    UNIFIED_AC_PARAMS, UnifiedACParams,
+    SectorNeutralizer, SectorExposure, SectorNeutralizedPortfolio
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -211,10 +222,12 @@ class BacktestEngine:
     """
     Core backtest engine with survivorship-bias-free testing.
 
-    Phase 2 enhancements:
+    V3.2.0 Institutional Enhancements:
+    - STRICT SECTOR NEUTRALIZATION with 20% max exposure cap
     - Drawdown protection with hysteresis
     - Capacity-aware position sizing
     - Walk-forward phase tracking
+    - Unified AC impact parameters
     """
 
     # Risk-free rate for Sharpe calculation (approximate JGB yield)
@@ -227,11 +240,17 @@ class BacktestEngine:
     DD_PROTECTION_TRIGGER = 0.20    # Trigger at 20% drawdown
     DD_PROTECTION_RECOVERY = 0.10   # Recover at 10% drawdown
 
+    # V3.2.0: Sector neutralization constraints
+    MAX_SECTOR_EXPOSURE = 0.20      # 20% max per sector
+    MIN_SECTORS = 5                 # Minimum sector diversification
+
     def __init__(
         self,
         initial_capital: float = 100_000_000,  # ¥100M
         commission_rate: float = 0.001,         # 0.1% (10bps)
-        slippage_rate: float = 0.0005           # 0.05% (5bps)
+        slippage_rate: float = 0.0005,          # 0.05% (5bps)
+        sector_neutralizer: Optional[SectorNeutralizer] = None,
+        enforce_sector_neutrality: bool = True
     ):
         """
         Initialize backtest engine.
@@ -240,10 +259,19 @@ class BacktestEngine:
             initial_capital: Starting capital in JPY
             commission_rate: Commission as fraction of trade value
             slippage_rate: Slippage as fraction of trade value
+            sector_neutralizer: Optional sector neutralizer (creates default if None)
+            enforce_sector_neutrality: If True, enforce 20% max sector exposure
         """
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
+        self.enforce_sector_neutrality = enforce_sector_neutrality
+
+        # V3.2.0: Sector neutralization
+        self.sector_neutralizer = sector_neutralizer or SectorNeutralizer(
+            max_sector_exposure=self.MAX_SECTOR_EXPOSURE,
+            min_sectors=self.MIN_SECTORS
+        )
 
         # State
         self.cash = initial_capital
@@ -257,6 +285,10 @@ class BacktestEngine:
         self.drawdown_protection_active: bool = False
         self._dd_protection_trigger_date: Optional[date] = None
         self._days_in_protection: int = 0
+
+        # V3.2.0: Sector exposure tracking
+        self._sector_violations: List[Dict[str, Any]] = []
+        self._daily_sector_exposures: List[Dict[str, float]] = []
         
     def reset(self) -> None:
         """Reset engine state"""
@@ -271,6 +303,91 @@ class BacktestEngine:
         self.drawdown_protection_active = False
         self._dd_protection_trigger_date = None
         self._days_in_protection = 0
+
+        # V3.2.0: Reset sector tracking
+        self._sector_violations = []
+        self._daily_sector_exposures = []
+
+    def set_sector_mapping(self, sector_map: Dict[str, str]) -> None:
+        """
+        Set sector mapping for stocks.
+
+        Args:
+            sector_map: Dict of {stock_code: sector_code}
+        """
+        self.sector_neutralizer.set_sector_mapping(sector_map)
+
+    def check_sector_exposure(self, prices: Dict[str, float]) -> Tuple[bool, List[str]]:
+        """
+        Check if current portfolio meets sector neutrality constraints.
+
+        Args:
+            prices: Current prices {code: price}
+
+        Returns:
+            Tuple of (is_neutral, violations_list)
+        """
+        # Calculate position values
+        position_values = {
+            code: trade.quantity * prices.get(code, trade.entry_price)
+            for code, trade in self.positions.items()
+        }
+
+        return self.sector_neutralizer.check_neutrality(position_values)
+
+    def get_sector_exposures(self, prices: Dict[str, float]) -> Dict[str, SectorExposure]:
+        """
+        Get current sector exposures.
+
+        Args:
+            prices: Current prices {code: price}
+
+        Returns:
+            Dict of {sector_code: SectorExposure}
+        """
+        position_values = {
+            code: trade.quantity * prices.get(code, trade.entry_price)
+            for code, trade in self.positions.items()
+        }
+
+        return self.sector_neutralizer.calculate_sector_exposure(position_values)
+
+    def can_open_position_sector_check(
+        self,
+        code: str,
+        proposed_value: float,
+        prices: Dict[str, float]
+    ) -> Tuple[bool, str]:
+        """
+        Check if opening a new position would violate sector constraints.
+
+        Args:
+            code: Stock code to potentially add
+            proposed_value: Proposed position value in JPY
+            prices: Current prices
+
+        Returns:
+            Tuple of (can_open, reason)
+        """
+        if not self.enforce_sector_neutrality:
+            return True, ""
+
+        # Get current position values
+        position_values = {
+            c: trade.quantity * prices.get(c, trade.entry_price)
+            for c, trade in self.positions.items()
+        }
+
+        # Add proposed position
+        position_values[code] = position_values.get(code, 0) + proposed_value
+
+        # Check neutrality
+        is_neutral, violations = self.sector_neutralizer.check_neutrality(position_values)
+
+        if not is_neutral:
+            return False, f"Sector violation: {violations[0]}"
+
+        return True, ""
         
     def get_equity(self, prices: Dict[str, float]) -> float:
         """Calculate current equity"""
@@ -353,7 +470,7 @@ class BacktestEngine:
         return trade
     
     def record_daily_snapshot(self, prices: Dict[str, float]) -> DailySnapshot:
-        """Record end-of-day snapshot"""
+        """Record end-of-day snapshot with sector exposure tracking"""
         equity = self.get_equity(prices)
         positions_value = equity - self.cash
 
@@ -377,6 +494,33 @@ class BacktestEngine:
 
         # Phase 2: Update drawdown protection state with hysteresis
         self._update_drawdown_protection(drawdown)
+
+        # V3.2.0: Track sector exposure
+        if self.enforce_sector_neutrality and self.positions:
+            is_neutral, violations = self.check_sector_exposure(prices)
+            exposures = self.get_sector_exposures(prices)
+
+            # Record max sector exposure
+            max_sector_exp = max(
+                (e.exposure_pct for e in exposures.values()),
+                default=0.0
+            )
+            self._daily_sector_exposures.append({
+                'date': self.current_date,
+                'max_exposure': max_sector_exp,
+                'is_neutral': is_neutral
+            })
+
+            # Log violations
+            if not is_neutral:
+                self._sector_violations.append({
+                    'date': self.current_date,
+                    'violations': violations,
+                    'exposures': {k: v.exposure_pct for k, v in exposures.items()}
+                })
+                logger.warning(
+                    f"SECTOR NEUTRALITY VIOLATION on {self.current_date}: {violations}"
+                )
 
         snapshot = DailySnapshot(
             date=self.current_date,

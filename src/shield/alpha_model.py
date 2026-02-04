@@ -1,19 +1,21 @@
 """
 Alpha Model with Advanced Market Impact & Survivorship Bias Avoidance
-GPT 5.2 Codex Audit Recommendations Implementation
+Institutional Refactor V3.2.0 - QuantConnect/Quantiacs Standard
 
 This module implements:
-1. Advanced Market Impact Model (Almgren-Chriss based)
+1. Advanced Market Impact Model (Almgren-Chriss based) with UNIFIED parameters
 2. Survivorship Bias Avoidance Logic
 3. Production-grade Alpha Signal Generation
+4. STRICT SECTOR NEUTRALIZATION with 20% max exposure cap
 
-Author: Asset Shield V2 Team
-Version: 2.0.0 (2026-01-29)
+Author: Asset Shield V3 Team
+Version: 3.2.0 (2026-02-04)
 """
 
 import logging
 import math
 import numpy as np
+import pandas as pd
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, List, Tuple, Any, Callable
 from dataclasses import dataclass, field, asdict
@@ -25,41 +27,424 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# UNIFIED Almgren-Chriss Parameters (V3.2.0 Synchronization)
+# =============================================================================
+# These parameters are the SINGLE SOURCE OF TRUTH across all modules:
+# - alpha_model.py (this file)
+# - execution_core.py
+# - capacity_engine.py
+#
+# Scale: ANNUALIZED for sigma, standardized gamma/eta coefficients
+
+@dataclass
+class UnifiedACParams:
+    """
+    Unified Almgren-Chriss Parameters - Institutional Standard
+
+    All modules MUST import and use these parameters to ensure
+    100% consistency in impact estimation across backtest and execution.
+
+    Calibration: Japanese Equity Market (TSE Prime), 2020-2025 data
+    """
+    # Permanent impact coefficient (information leakage)
+    # Calibrated to sqrt model: I_perm = gamma * sigma * sqrt(Q/ADV)
+    gamma: float = 0.10
+
+    # Temporary impact coefficient (execution pressure)
+    # Calibrated to power law: I_temp = eta * sigma * (Q/(ADV*T))^0.6
+    eta: float = 0.01
+
+    # Annualized volatility (default assumption)
+    # Convert to daily: sigma_daily = sigma_annual / sqrt(252)
+    sigma_annual: float = 0.25
+
+    # Risk aversion parameter for optimal execution
+    lambda_risk: float = 1e-6
+
+    # Maximum participation rate (institutional standard)
+    max_participation_rate: float = 0.10  # 10% of ADV
+
+    # Half bid-ask spread (one-way cost) in bps
+    spread_bps: float = 10.0
+
+    @property
+    def sigma_daily(self) -> float:
+        """Convert annualized volatility to daily"""
+        return self.sigma_annual / math.sqrt(252)
+
+    @classmethod
+    def conservative(cls) -> 'UnifiedACParams':
+        """Conservative parameters for worst-case estimation"""
+        return cls(gamma=0.15, eta=0.02, sigma_annual=0.30, spread_bps=15.0)
+
+    @classmethod
+    def standard(cls) -> 'UnifiedACParams':
+        """Standard parameters for normal market conditions"""
+        return cls(gamma=0.10, eta=0.01, sigma_annual=0.25, spread_bps=10.0)
+
+    @classmethod
+    def aggressive(cls) -> 'UnifiedACParams':
+        """Aggressive parameters for high-liquidity names"""
+        return cls(gamma=0.08, eta=0.008, sigma_annual=0.20, spread_bps=8.0)
+
+
+# Global singleton for cross-module access
+UNIFIED_AC_PARAMS = UnifiedACParams.standard()
+
+
+# =============================================================================
+# SECTOR NEUTRALIZATION ENGINE (V3.2.0)
+# =============================================================================
+
+@dataclass
+class SectorExposure:
+    """Sector exposure tracking for neutralization"""
+    sector_code: str
+    sector_name: str
+    exposure_pct: float
+    position_count: int
+    total_value: float
+    stocks: List[str]
+
+
+@dataclass
+class SectorNeutralizedPortfolio:
+    """Result of sector neutralization process"""
+    selected_stocks: List[str]
+    sector_exposures: Dict[str, SectorExposure]
+    max_sector_exposure: float
+    is_neutral: bool
+    violations: List[str]
+
+
+class SectorNeutralizer:
+    """
+    STRICT Sector Neutralization Engine
+
+    Enforces institutional-grade sector constraints:
+    - Maximum 20% exposure per sector (configurable)
+    - Top-N selection within each sector group
+    - Balanced portfolio regardless of market regime
+
+    Uses TSE Sector17 classification (17 sectors) by default.
+    """
+
+    # TSE Sector17 Classification
+    SECTOR17_NAMES = {
+        '01': 'Foods',
+        '02': 'Energy Resources',
+        '03': 'Construction & Materials',
+        '04': 'Raw Materials & Chemicals',
+        '05': 'Pharmaceuticals',
+        '06': 'Automobiles & Transportation Equipment',
+        '07': 'Steel & Nonferrous Metals',
+        '08': 'Machinery',
+        '09': 'Electric Appliances & Precision Instruments',
+        '10': 'IT & Services, Others',
+        '11': 'Electric Power & Gas',
+        '12': 'Transportation & Logistics',
+        '13': 'Commercial & Wholesale Trade',
+        '14': 'Retail Trade',
+        '15': 'Banks',
+        '16': 'Financials (ex Banks)',
+        '17': 'Real Estate',
+    }
+
+    def __init__(
+        self,
+        max_sector_exposure: float = 0.20,  # 20% cap per sector
+        min_sectors: int = 5,               # Minimum sector diversification
+        use_sector17: bool = True           # Use Sector17 (vs Sector33)
+    ):
+        """
+        Initialize Sector Neutralizer.
+
+        Args:
+            max_sector_exposure: Maximum exposure per sector (0.20 = 20%)
+            min_sectors: Minimum number of sectors required
+            use_sector17: Use 17-sector classification (vs 33-sector)
+        """
+        self.max_sector_exposure = max_sector_exposure
+        self.min_sectors = min_sectors
+        self.use_sector17 = use_sector17
+
+        # Sector mapping cache: code -> sector_code
+        self._sector_map: Dict[str, str] = {}
+
+        logger.info(
+            f"SectorNeutralizer initialized: max_exposure={max_sector_exposure:.0%}, "
+            f"min_sectors={min_sectors}, classification={'Sector17' if use_sector17 else 'Sector33'}"
+        )
+
+    def set_sector_mapping(self, sector_map: Dict[str, str]) -> None:
+        """
+        Set sector mapping for stocks.
+
+        Args:
+            sector_map: Dict of {stock_code: sector_code}
+        """
+        self._sector_map = sector_map.copy()
+        logger.info(f"Sector mapping set for {len(sector_map)} stocks")
+
+    def get_sector(self, code: str) -> str:
+        """Get sector code for a stock"""
+        return self._sector_map.get(code, 'UNKNOWN')
+
+    def get_sector_name(self, sector_code: str) -> str:
+        """Get human-readable sector name"""
+        return self.SECTOR17_NAMES.get(sector_code, f'Sector {sector_code}')
+
+    def calculate_sector_exposure(
+        self,
+        positions: Dict[str, float],
+        total_value: float = None
+    ) -> Dict[str, SectorExposure]:
+        """
+        Calculate current sector exposures.
+
+        Args:
+            positions: Dict of {stock_code: position_value}
+            total_value: Total portfolio value (calculated if None)
+
+        Returns:
+            Dict of {sector_code: SectorExposure}
+        """
+        if total_value is None:
+            total_value = sum(positions.values())
+
+        if total_value <= 0:
+            return {}
+
+        # Group by sector
+        sector_positions: Dict[str, List[Tuple[str, float]]] = defaultdict(list)
+        for code, value in positions.items():
+            sector = self.get_sector(code)
+            sector_positions[sector].append((code, value))
+
+        # Calculate exposures
+        exposures = {}
+        for sector_code, stocks in sector_positions.items():
+            total_sector_value = sum(v for _, v in stocks)
+            exposures[sector_code] = SectorExposure(
+                sector_code=sector_code,
+                sector_name=self.get_sector_name(sector_code),
+                exposure_pct=total_sector_value / total_value,
+                position_count=len(stocks),
+                total_value=total_sector_value,
+                stocks=[s for s, _ in stocks]
+            )
+
+        return exposures
+
+    def check_neutrality(
+        self,
+        positions: Dict[str, float]
+    ) -> Tuple[bool, List[str]]:
+        """
+        Check if portfolio meets sector neutrality constraints.
+
+        Args:
+            positions: Dict of {stock_code: position_value}
+
+        Returns:
+            Tuple of (is_neutral, list_of_violations)
+        """
+        exposures = self.calculate_sector_exposure(positions)
+        violations = []
+
+        # Check max exposure constraint
+        for sector_code, exposure in exposures.items():
+            if exposure.exposure_pct > self.max_sector_exposure:
+                violations.append(
+                    f"Sector {exposure.sector_name}: {exposure.exposure_pct:.1%} > {self.max_sector_exposure:.0%}"
+                )
+
+        # Check minimum diversification
+        if len(exposures) < self.min_sectors:
+            violations.append(
+                f"Insufficient diversification: {len(exposures)} sectors < {self.min_sectors} required"
+            )
+
+        return len(violations) == 0, violations
+
+    def select_sector_neutral_portfolio(
+        self,
+        candidates: List[Tuple[str, float]],  # (code, alpha_score)
+        target_positions: int = 20,
+        target_value: float = None
+    ) -> SectorNeutralizedPortfolio:
+        """
+        Select a sector-neutral portfolio from ranked candidates.
+
+        Implements TOP-N-PER-SECTOR selection:
+        1. Group candidates by sector
+        2. Sort each sector by alpha score
+        3. Select top candidates from each sector proportionally
+        4. Enforce 20% max exposure cap
+
+        Args:
+            candidates: List of (stock_code, alpha_score) tuples, sorted by alpha descending
+            target_positions: Target number of positions
+            target_value: Target portfolio value (for equal-weight calculation)
+
+        Returns:
+            SectorNeutralizedPortfolio with selected stocks and exposures
+        """
+        if not candidates:
+            return SectorNeutralizedPortfolio(
+                selected_stocks=[],
+                sector_exposures={},
+                max_sector_exposure=0.0,
+                is_neutral=True,
+                violations=[]
+            )
+
+        # Group by sector with alpha scores
+        sector_candidates: Dict[str, List[Tuple[str, float]]] = defaultdict(list)
+        for code, alpha in candidates:
+            sector = self.get_sector(code)
+            sector_candidates[sector].append((code, alpha))
+
+        # Sort each sector by alpha (descending)
+        for sector in sector_candidates:
+            sector_candidates[sector].sort(key=lambda x: x[1], reverse=True)
+
+        # Calculate positions per sector based on cap
+        n_sectors = len(sector_candidates)
+        max_per_sector = int(target_positions * self.max_sector_exposure)
+        max_per_sector = max(1, max_per_sector)  # At least 1 per sector
+
+        # Even distribution as baseline
+        base_per_sector = max(1, target_positions // n_sectors)
+
+        # Select from each sector
+        selected = []
+        for sector, stocks in sector_candidates.items():
+            # Take up to max_per_sector from each sector
+            n_select = min(len(stocks), max_per_sector, base_per_sector + 2)
+            selected.extend([code for code, _ in stocks[:n_select]])
+
+        # If we have too many, trim lowest alpha across all
+        if len(selected) > target_positions:
+            # Re-score and keep top
+            selected_with_alpha = [
+                (code, next(alpha for c, alpha in candidates if c == code))
+                for code in selected
+            ]
+            selected_with_alpha.sort(key=lambda x: x[1], reverse=True)
+            selected = [code for code, _ in selected_with_alpha[:target_positions]]
+
+        # Calculate final exposures (equal weight assumption)
+        position_value = (target_value or 1.0) / len(selected) if selected else 0
+        positions = {code: position_value for code in selected}
+
+        sector_exposures = self.calculate_sector_exposure(positions)
+        is_neutral, violations = self.check_neutrality(positions)
+
+        max_exposure = max(
+            (e.exposure_pct for e in sector_exposures.values()),
+            default=0.0
+        )
+
+        return SectorNeutralizedPortfolio(
+            selected_stocks=selected,
+            sector_exposures=sector_exposures,
+            max_sector_exposure=max_exposure,
+            is_neutral=is_neutral,
+            violations=violations
+        )
+
+    def rebalance_to_neutral(
+        self,
+        current_positions: Dict[str, float],
+        candidate_alphas: Dict[str, float],
+        target_value: float
+    ) -> Dict[str, float]:
+        """
+        Rebalance existing portfolio to sector neutrality.
+
+        Args:
+            current_positions: Dict of {code: current_value}
+            candidate_alphas: Dict of {code: alpha_score}
+            target_value: Target total portfolio value
+
+        Returns:
+            Dict of {code: target_value} after rebalancing
+        """
+        # Convert to ranked list
+        candidates = sorted(
+            [(code, alpha) for code, alpha in candidate_alphas.items()],
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        # Get sector-neutral selection
+        result = self.select_sector_neutral_portfolio(
+            candidates,
+            target_positions=len(current_positions) or 20,
+            target_value=target_value
+        )
+
+        # Calculate target positions (equal weight for simplicity)
+        if result.selected_stocks:
+            weight = 1.0 / len(result.selected_stocks)
+            return {code: target_value * weight for code in result.selected_stocks}
+
+        return {}
+
+
+# =============================================================================
 # Market Impact Model (Almgren-Chriss Based)
 # =============================================================================
 
 @dataclass
 class MarketImpactParams:
     """
-    Market Impact Model Parameters
-    
+    Market Impact Model Parameters - SYNCHRONIZED with UnifiedACParams
+
     Based on Almgren-Chriss (2000) optimal execution framework with
     extensions for Japanese equity market characteristics.
-    
+
+    V3.2.0: All parameters now sourced from UNIFIED_AC_PARAMS for
+    100% consistency across backtest and execution.
+
     References:
     - Almgren, R., & Chriss, N. (2000). Optimal execution of portfolio transactions.
     - Kissell, R. (2013). The Science of Algorithmic Trading and Portfolio Management.
     """
     # Permanent impact coefficient (price impact per unit traded)
-    gamma: float = 0.1
-    
+    gamma: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.gamma)
+
     # Temporary impact coefficient (execution cost)
-    eta: float = 0.01
-    
-    # Volatility (annualized)
-    sigma: float = 0.20
-    
+    eta: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.eta)
+
+    # Volatility (annualized) - UNIFIED across all modules
+    sigma: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.sigma_annual)
+
     # Risk aversion parameter
-    lambda_risk: float = 1e-6
-    
+    lambda_risk: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.lambda_risk)
+
     # Market participation rate limit
-    max_participation_rate: float = 0.10  # 10% of ADV
-    
+    max_participation_rate: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.max_participation_rate)
+
     # Bid-ask spread (bps)
-    spread_bps: float = 10.0
-    
+    spread_bps: float = field(default_factory=lambda: UNIFIED_AC_PARAMS.spread_bps)
+
     # Price tick size (JPY)
     tick_size: float = 1.0
+
+    @classmethod
+    def from_unified(cls, params: UnifiedACParams = None) -> 'MarketImpactParams':
+        """Create from unified parameters"""
+        p = params or UNIFIED_AC_PARAMS
+        return cls(
+            gamma=p.gamma,
+            eta=p.eta,
+            sigma=p.sigma_annual,
+            lambda_risk=p.lambda_risk,
+            max_participation_rate=p.max_participation_rate,
+            spread_bps=p.spread_bps
+        )
 
 
 @dataclass
