@@ -1,0 +1,47 @@
+{
+  "strategy": "Asset Shield V3.2.0 Production",
+  "total_return": 42.439984720000005,
+  "annual_return": 0.24468502523541824,
+  "final_equity": 434399847.20000005,
+  "sharpe_ratio": 1.085083888242971,
+  "max_drawdown": NaN,
+  "volatility": 0.22549871755226783,
+  "total_trades": 428,
+  "win_rate": 0.5700934579439252,
+  "profit_factor": 4.1151781863503825,
+  "walk_forward": {
+    "training": {
+      "phase": "training",
+      "start_date": "2008-05-07",
+      "end_date": "2015-12-30",
+      "total_return": 2.2301537,
+      "annual_return": 0.16571619019374118,
+      "sharpe_ratio": 0.9478337796854127,
+      "max_drawdown": NaN,
+      "total_trades": 168,
+      "win_rate": 0.5535714285714286
+    },
+    "validation": {
+      "phase": "validation",
+      "start_date": "2016-01-04",
+      "end_date": "2020-12-30",
+      "total_return": 0.7262651482168361,
+      "annual_return": 0.11566065116826407,
+      "sharpe_ratio": 0.6165892109064254,
+      "max_drawdown": NaN,
+      "total_trades": 138,
+      "win_rate": 0.4927536231884058
+    },
+    "out_of_sample": {
+      "phase": "out_of_sample",
+      "start_date": "2021-01-04",
+      "end_date": "2026-02-03",
+      "total_return": 5.571835232447938,
+      "annual_return": 0.44849158944834255,
+      "sharpe_ratio": 1.654448016177298,
+      "max_drawdown": 0.2602719347816889,
+      "total_trades": 122,
+      "win_rate": 0.680327868852459
+    }
+  }
+}

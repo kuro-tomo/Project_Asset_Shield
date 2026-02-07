@@ -1,0 +1,19 @@
+2026-02-06 09:19:50,406 | W5 | Starting FULL UNIVERSE: 2022-01-01 to 2026-02-01
+2026-02-06 09:19:52,247 | W5 | Total universe: 4990 stocks
+2026-02-06 09:19:52,249 | W5 | Sector map loaded
+2026-02-06 09:20:09,918 | W5 | Price data loaded: 1097 stocks with sufficient history
+2026-02-06 09:20:12,387 | W5 | Financial data loaded: 3812 stocks
+2026-02-06 09:20:12,517 | W5 | Trading days: 997
+2026-02-06 09:20:12,700 | W5 | 2022-01-04: 287 passed filters, regime=BULL
+2026-02-06 09:20:12,700 | W5 | 2022-01-04: ¥100,000,000 BULL (DD=0.0%)
+2026-02-06 09:20:18,126 | W5 | 2023-01-13: ¥98,477,665 NEUTRAL (DD=2.5%)
+2026-02-06 09:20:24,613 | W5 | 2024-01-19: ¥104,246,942 BULL (DD=0.6%)
+2026-02-06 09:20:31,729 | W5 | 2025-01-28: ¥109,227,313 NEUTRAL (DD=0.5%)
+2026-02-06 09:20:39,091 | W5 | DONE: Return=22.44%, CAGR=5.10%, Sharpe=1.07, MaxDD=5.08%
+
+SEGMENT 5 COMPLETE
+Universe: 1097 stocks
+Return: 22.44%
+CAGR: 5.10%
+Sharpe: 1.07
+Max DD: 5.08%

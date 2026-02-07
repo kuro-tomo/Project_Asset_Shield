@@ -1,0 +1,20 @@
+2026-02-06 09:19:50,406 | W1 | Starting FULL UNIVERSE: 2008-05-07 to 2012-12-31
+2026-02-06 09:19:52,247 | W1 | Total universe: 4990 stocks
+2026-02-06 09:19:52,249 | W1 | Sector map loaded
+2026-02-06 09:20:28,099 | W1 | Price data loaded: 2724 stocks with sufficient history
+2026-02-06 09:20:30,554 | W1 | Financial data loaded: 3654 stocks
+2026-02-06 09:20:30,845 | W1 | Trading days: 1144
+2026-02-06 09:20:31,136 | W1 | 2008-05-07: 0 passed filters, regime=BULL
+2026-02-06 09:20:31,136 | W1 | 2008-05-07: ¥100,000,000 BULL (DD=0.0%)
+2026-02-06 09:20:37,402 | W1 | 2009-05-15: ¥100,000,000 CRISIS (DD=0.0%)
+2026-02-06 09:20:47,479 | W1 | 2010-05-25: ¥100,221,648 BEAR (DD=5.0%)
+2026-02-06 09:20:58,583 | W1 | 2011-06-01: ¥99,227,444 BEAR (DD=5.9%)
+2026-02-06 09:21:11,414 | W1 | 2012-06-05: ¥102,896,417 BEAR (DD=4.5%)
+2026-02-06 09:21:17,350 | W1 | DONE: Return=11.66%, CAGR=2.40%, Sharpe=0.52, MaxDD=7.68%
+
+SEGMENT 1 COMPLETE
+Universe: 2724 stocks
+Return: 11.66%
+CAGR: 2.40%
+Sharpe: 0.52
+Max DD: 7.68%

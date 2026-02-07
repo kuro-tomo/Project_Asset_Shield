@@ -1,0 +1,20 @@
+2026-02-06 09:16:14,476 | W3 | Starting FULL UNIVERSE: 2015-01-01 to 2018-12-31
+2026-02-06 09:16:16,439 | W3 | Total universe: 4990 stocks
+2026-02-06 09:16:16,441 | W3 | Sector map loaded
+2026-02-06 09:17:18,844 | W3 | Price data loaded: 4218 stocks with sufficient history
+2026-02-06 09:17:21,546 | W3 | Financial data loaded: 3941 stocks
+2026-02-06 09:17:22,019 | W3 | Trading days: 981
+2026-02-06 09:17:22,553 | W3 | 2015-01-05: 601 passed filters, regime=BULL
+2026-02-06 09:17:22,553 | W3 | 2015-01-05: ¥100,000,000 BULL (DD=0.0%)
+2026-02-06 09:17:33,218 | W3 | 2016-01-13: ¥105,743,435 BEAR (DD=8.1%)
+2026-02-06 09:17:43,733 | W3 | 2016-11-09: KILL SWITCH (DD=15.3%)
+2026-02-06 09:17:45,808 | W3 | 2017-01-20: ¥97,531,642 BULL (DD=1.2%)
+2026-02-06 09:17:58,944 | W3 | 2018-01-25: ¥112,695,169 BULL (DD=1.7%)
+2026-02-06 09:18:11,272 | W3 | DONE: Return=2.05%, CAGR=0.51%, Sharpe=0.10, MaxDD=16.64%
+
+SEGMENT 3 COMPLETE
+Universe: 4218 stocks
+Return: 2.05%
+CAGR: 0.51%
+Sharpe: 0.10
+Max DD: 16.64%

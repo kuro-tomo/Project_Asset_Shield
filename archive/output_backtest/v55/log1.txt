@@ -1,0 +1,10 @@
+2026-02-06 09:47:54,419 | W1 | V5.5 PURE MOMENTUM: 2008-05-07 to 2012-12-31
+2026-02-06 09:47:55,025 | W1 | Universe: 4998 stocks
+2026-02-06 09:48:30,944 | W1 | Price data: 2586 stocks
+2026-02-06 09:48:31,233 | W1 | Trading days: 1144
+Traceback (most recent call last):
+  File "/Users/MBP/Desktop/Project_Asset_Shield/scripts/v55_pure_momentum.py", line 233, in <module>
+    run_segment(args.segment, date.fromisoformat(args.start), date.fromisoformat(args.end), args.output)
+  File "/Users/MBP/Desktop/Project_Asset_Shield/scripts/v55_pure_momentum.py", line 204, in run_segment
+    logger.info(f"{dt}: {len(candidates)} liquid stocks, top20 mom={candidates[0][1]:.2%} if candidates else 0, {regime}")
+IndexError: list index out of range

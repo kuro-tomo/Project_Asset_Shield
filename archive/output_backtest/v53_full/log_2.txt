@@ -1,0 +1,20 @@
+2026-02-06 09:16:14,477 | W2 | Starting FULL UNIVERSE: 2012-01-01 to 2015-12-31
+2026-02-06 09:16:16,482 | W2 | Total universe: 4990 stocks
+2026-02-06 09:16:16,484 | W2 | Sector map loaded
+2026-02-06 09:17:06,503 | W2 | Price data loaded: 3899 stocks with sufficient history
+2026-02-06 09:17:09,136 | W2 | Financial data loaded: 3794 stocks
+2026-02-06 09:17:09,526 | W2 | Trading days: 981
+2026-02-06 09:17:09,998 | W2 | 2012-01-04: 381 passed filters, regime=BULL
+2026-02-06 09:17:09,998 | W2 | 2012-01-04: ¥100,000,000 BULL (DD=0.0%)
+2026-02-06 09:17:17,804 | W2 | 2012-10-22: 314 passed filters, regime=NEUTRAL
+2026-02-06 09:17:19,754 | W2 | 2013-01-08: ¥97,294,198 BULL (DD=4.2%)
+2026-02-06 09:17:30,384 | W2 | 2014-01-16: ¥110,777,898 BULL (DD=6.1%)
+2026-02-06 09:17:42,078 | W2 | 2015-01-23: ¥117,884,607 BULL (DD=6.4%)
+2026-02-06 09:17:53,733 | W2 | DONE: Return=25.32%, CAGR=5.83%, Sharpe=0.60, MaxDD=13.57%
+
+SEGMENT 2 COMPLETE
+Universe: 3899 stocks
+Return: 25.32%
+CAGR: 5.83%
+Sharpe: 0.60
+Max DD: 13.57%

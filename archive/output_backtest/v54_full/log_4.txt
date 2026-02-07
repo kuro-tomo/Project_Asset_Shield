@@ -1,0 +1,9 @@
+2026-02-06 09:19:50,406 | W4 | Starting FULL UNIVERSE: 2018-01-01 to 2022-12-31
+2026-02-06 09:19:52,248 | W4 | Total universe: 4990 stocks
+2026-02-06 09:19:52,250 | W4 | Sector map loaded
+2026-02-06 09:20:49,925 | W4 | Price data loaded: 4252 stocks with sufficient history
+2026-02-06 09:20:52,762 | W4 | Financial data loaded: 3951 stocks
+2026-02-06 09:20:53,226 | W4 | Trading days: 1217
+2026-02-06 09:20:53,923 | W4 | 2018-01-04: 1118 passed filters, regime=BULL
+2026-02-06 09:20:53,924 | W4 | 2018-01-04: ¥100,000,000 BULL (DD=0.0%)
+2026-02-06 09:21:08,609 | W4 | 2019-01-11: ¥93,677,314 CRISIS (DD=8.7%)

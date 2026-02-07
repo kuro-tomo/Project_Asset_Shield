@@ -1,0 +1,93 @@
+{
+  "strategy": "Alpha Relaxation (Percentile-based PBR/ROE)",
+  "total_return": 0.0,
+  "annual_return": 0.0,
+  "final_equity": "10000000",
+  "sharpe_ratio": 0,
+  "sortino_ratio": 0,
+  "max_drawdown": 0.0,
+  "calmar_ratio": 0,
+  "volatility": 0.0,
+  "total_trades": 0,
+  "win_rate": 0,
+  "profit_factor": 0,
+  "avg_holding_days": 0,
+  "avg_impact_bps": 9.91,
+  "max_aum_supported_b": 30.0,
+  "walk_forward": {
+    "training": {
+      "phase": "training",
+      "start_date": "2007-01-01",
+      "end_date": "2015-12-31",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "sortino_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "total_trades": 0,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "trades": []
+    },
+    "validation": {
+      "phase": "validation",
+      "start_date": "2016-01-01",
+      "end_date": "2020-12-31",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "sortino_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "total_trades": 0,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "trades": []
+    },
+    "out_of_sample": {
+      "phase": "out_of_sample",
+      "start_date": "2021-01-01",
+      "end_date": "2026-12-31",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "sortino_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "total_trades": 0,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "trades": []
+    },
+    "overfitting_ratio": 1.0,
+    "degradation_ratio": 1.0,
+    "passed_validation": "True"
+  },
+  "almgren_chriss_stats": {
+    "total_calculations": 15
+  },
+  "sector_concentration": null,
+  "audit_notes": {
+    "adt_point_in_time": true,
+    "impact_model_mismatch_logged": true,
+    "db_pragma_optimized": true
+  },
+  "selection_criteria": {
+    "type": "percentile",
+    "pbr_percentile": 0.2,
+    "roe_percentile": 0.8,
+    "composite_percentile": 0.8,
+    "min_adt": 400000000
+  },
+  "trades_by_year": {},
+  "audit": {
+    "total_checks": 9,
+    "passed": 9,
+    "failed": 0,
+    "warnings": 0,
+    "integrity_verified": true,
+    "phase_checksums": {
+      "training": "fd7fd0639fea3b86",
+      "validation": "74b4ea60f1089ac3",
+      "out_of_sample": "7dbfacd3a42ab954"
+    }
+  }
+}

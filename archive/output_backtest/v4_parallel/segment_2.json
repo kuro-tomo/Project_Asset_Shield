@@ -1,0 +1,19 @@
+{
+  "segment_id": 2,
+  "start_date": "2012-01-01",
+  "end_date": "2015-12-31",
+  "metrics": {
+    "total_return": -0.01680845799999997,
+    "cagr": -0.004243355231036916,
+    "sharpe_ratio": -0.041332457266144665,
+    "sortino_ratio": -0.019390886922943818,
+    "max_drawdown": 0.16492444046993085,
+    "max_drawdown_date": "2012-05-09",
+    "calmar_ratio": -0.025729086719627633,
+    "win_rate": 0.02127659574468085,
+    "profit_factor": 0.9221916912768694,
+    "avg_monthly_return": -0.00023627676904170128,
+    "monthly_std": 0.02337736618291764,
+    "best_month": 0.13161764355121686,
+    "worst_month": -0.07052579654775426,
+    "positive_months": 

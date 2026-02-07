@@ -1,0 +1,19 @@
+{
+  "segment_id": 4,
+  "start_date": "2021-01-01",
+  "end_date": "2026-02-01",
+  "metrics": {
+    "total_return": -0.11937927999999987,
+    "cagr": -0.02476044029727431,
+    "sharpe_ratio": -0.34882635584884425,
+    "sortino_ratio": -0.20483321699814577,
+    "max_drawdown": 0.1547920949386128,
+    "max_drawdown_date": "2021-10-06",
+    "calmar_ratio": -0.15995933324045888,
+    "win_rate": 0.06666666666666667,
+    "profit_factor": 0.5144531303100253,
+    "avg_monthly_return": -0.0018004172086465598,
+    "monthly_std": 0.018088933046454078,
+    "best_month": 0.06373408123747448,
+    "worst_month": -0.09893810327815167,
+    "positive_months": 

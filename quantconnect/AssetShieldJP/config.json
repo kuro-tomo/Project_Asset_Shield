@@ -1,0 +1,40 @@
+{
+    "algorithm-type-name": "AssetShieldJP",
+    "algorithm-language": "Python",
+    "algorithm-location": "main.py",
+    "parameters": {
+        "max_positions": "20",
+        "position_pct": "0.05",
+        "max_position_pct": "0.10",
+        "rebalance_days": "63",
+        "holding_days": "250",
+        "min_adt": "400000000",
+        "stop_loss": "0.12",
+        "take_profit": "0.35",
+        "max_portfolio_dd": "0.35",
+        "trend_ma_period": "60"
+    },
+    "description": "Asset Shield V3.2.0 - Japanese Value-Quality Strategy with Sector Neutralization",
+    "cloud-id": "",
+    "local-id": "",
+    "organization-id": "",
+    "data-folder": "../data/",
+    "debugging": false,
+    "debugging-method": "LocalCmdLine",
+    "log-handler": "CompositeLogHandler",
+    "messaging-handler": "QuantConnect.Messaging.Messaging",
+    "job-user-id": "",
+    "api-access-token": "",
+    "version-id": "",
+    "environments": {
+        "backtesting": {
+            "live-mode": false,
+            "setup-handler": "QuantConnect.Lean.Engine.Setup.BacktestingSetupHandler",
+            "result-handler": "QuantConnect.Lean.Engine.Results.BacktestingResultHandler",
+            "data-feed-handler": "QuantConnect.Lean.Engine.DataFeeds.FileSystemDataFeed",
+            "real-time-handler": "QuantConnect.Lean.Engine.RealTime.BacktestingRealTimeHandler",
+            "history-provider": "QuantConnect.Lean.Engine.HistoricalData.SubscriptionDataReaderHistoryProvider",
+            "transaction-handler": "QuantConnect.Lean.Engine.TransactionHandlers.BacktestingTransactionHandler"
+        }
+    }
+}

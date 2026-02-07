@@ -1,0 +1,47 @@
+
+================================================================================
+ASSET SHIELD V3.2.0 - WORLD RANK COMPLIANCE REPORT
+================================================================================
+Generated: 2026-02-04 22:38:21
+
+[CORE METRICS]
+  Total Return:     7247.42%
+  Annual Return:    28.35%
+  Final Equity:     ¥734,741,806
+
+[RISK METRICS]
+  Sharpe (Overall): 0.31
+  Sortino:          1.79
+  Max Drawdown:     36.62%
+  Calmar:           0.77
+  Volatility:       89.81%
+
+[WALK-FORWARD VALIDATION]
+  Training   (2007-2015): Sharpe 0.47, 94 trades
+  Validation (2016-2020): Sharpe 0.97, 84 trades
+  OOS        (2021-2026): Sharpe 1.02, 89 trades
+
+[WORLD RANK COMPLIANCE]
+  Overall Sharpe >= 1.0:  0.31 ✗ FAIL
+  OOS Sharpe >= 0.7:      1.02 ✓ PASS
+  Avg Impact <= 20 bps:   21.1 bps ✗ FAIL
+  OOS Trades >= 15:       89 ✓ PASS
+
+[COMPETITION READINESS]
+  QuantConnect Alpha Streams: READY
+  Quantiacs:                  READY
+
+[STRATEGY PARAMETERS - OPTIMAL]
+  min_adt:          400M JPY (volatility control)
+  max_positions:    15
+  position_pct:     8%
+  rebalance_days:   63 (quarterly)
+  pbr_percentile:   0.20 (bottom 20%)
+  roe_percentile:   0.80 (top 20%)
+
+[UNIFIED AC PARAMS]
+  gamma:            0.10 (permanent impact)
+  eta:              0.01 (temporary impact)
+  sigma_annual:     0.25
+  max_participation: 0.10 (10% ADV)
+================================================================================
