@@ -13,6 +13,7 @@ Features (Premium-exclusive marked with ★):
   - Quality (ROE = NP/Equity)
   ★ Margin ratio (long/short balance change)
   ★ Short-sell ratio by sector
+  ★ Individual stock short position ratio (short-sale-report)
 
 Usage:
     # Full pipeline: fetch data, train, predict, submit
@@ -84,6 +85,7 @@ FEATURE_COLS = [
     "earnings_yield", "roe", "bps_yield",
     "margin_ratio", "margin_ratio_chg",
     "sector_short_ratio",
+    "short_position_ratio",
 ]
 
 # ---------------------------------------------------------------------------
@@ -190,6 +192,20 @@ class JQuantsClient:
         if to_:
             params["to"] = to_
         data = self._get_all("/markets/short-ratio", params)
+        return pd.DataFrame(data)
+
+    def get_short_sale(self, disc_date: str = None, code: str = None,
+                       disc_date_from: str = None, disc_date_to: str = None) -> pd.DataFrame:
+        params = {}
+        if disc_date:
+            params["disc_date"] = disc_date
+        if code:
+            params["code"] = code
+        if disc_date_from:
+            params["disc_date_from"] = disc_date_from
+        if disc_date_to:
+            params["disc_date_to"] = disc_date_to
+        data = self._get_all("/markets/short-sale-report", params)
         return pd.DataFrame(data)
 
 
@@ -325,8 +341,41 @@ def fetch_all_data(jq: JQuantsClient, lookback_days: int = PRICE_LOOKBACK_DAYS):
             short.to_parquet(short_cache, index=False)
     log.info(f"  Short ratio records: {len(short)}")
 
+    # 6. Individual stock short-sale positions (★ Premium)
+    log.info("Fetching short-sale positions...")
+    short_sale_cache = CACHE_DIR / "short_sale.parquet"
+    short_sale_from = (today - timedelta(days=90)).strftime("%Y%m%d")
+    if short_sale_cache.exists():
+        existing = pd.read_parquet(short_sale_cache)
+        existing["DiscDate"] = pd.to_datetime(existing["DiscDate"]).dt.strftime("%Y%m%d")
+        last_date = existing["DiscDate"].max()
+        if last_date >= to_date:
+            short_sale = existing
+            log.info(f"  Short-sale cache is up to date: {len(short_sale)} records")
+        else:
+            new_from = (datetime.strptime(last_date, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+            log.info(f"  Updating short-sale from {new_from}...")
+            try:
+                new_data = jq.get_short_sale(disc_date_from=new_from, disc_date_to=to_date)
+                short_sale = pd.concat([existing, new_data], ignore_index=True).drop_duplicates(
+                    subset=["DiscDate", "Code", "SSName"], keep="last") if len(new_data) > 0 else existing
+            except Exception as e:
+                log.warning(f"  Short-sale fetch failed: {e}")
+                short_sale = existing
+            if len(short_sale) > 0:
+                short_sale.to_parquet(short_sale_cache, index=False)
+    else:
+        try:
+            short_sale = jq.get_short_sale(disc_date_from=short_sale_from, disc_date_to=to_date)
+            if len(short_sale) > 0:
+                short_sale.to_parquet(short_sale_cache, index=False)
+        except Exception as e:
+            log.warning(f"  Short-sale fetch failed: {e}")
+            short_sale = pd.DataFrame()
+    log.info(f"  Short-sale records: {len(short_sale)}")
+
     log.info("Data fetch complete.")
-    return listed, prices, fins, margin, short
+    return listed, prices, fins, margin, short, short_sale
 
 
 def _fetch_fins_concurrent(jq: JQuantsClient, codes: list, max_workers: int = 8) -> pd.DataFrame:
@@ -429,7 +478,8 @@ def _fetch_margin_by_date(jq: JQuantsClient, from_date: str, to_date: str) -> pd
 # ---------------------------------------------------------------------------
 def build_features(listed: pd.DataFrame, prices: pd.DataFrame,
                    fins: pd.DataFrame, margin: pd.DataFrame,
-                   short: pd.DataFrame) -> pd.DataFrame:
+                   short: pd.DataFrame,
+                   short_sale: pd.DataFrame = None) -> pd.DataFrame:
     """Build cross-sectional features for all stocks on the latest date."""
     log.info("Building features...")
 
@@ -568,6 +618,20 @@ def build_features(listed: pd.DataFrame, prices: pd.DataFrame,
     else:
         features["sector_short_ratio"] = np.nan
 
+    # --- Individual stock short position ratio (★ Premium) ---
+    if short_sale is not None and len(short_sale) > 0:
+        ss = short_sale.copy()
+        ss["DiscDate"] = pd.to_datetime(ss["DiscDate"], errors="coerce")
+        ss["ShrtPosToSO"] = pd.to_numeric(ss["ShrtPosToSO"], errors="coerce")
+        # Aggregate: sum of all short-sellers' ratios per stock (latest date)
+        ss_latest = (ss.sort_values("DiscDate")
+                     .groupby("Code")["ShrtPosToSO"]
+                     .last().reset_index())
+        ss_latest.rename(columns={"ShrtPosToSO": "short_position_ratio"}, inplace=True)
+        features = features.merge(ss_latest, on="Code", how="left")
+    else:
+        features["short_position_ratio"] = np.nan
+
     # --- Rank-normalize all features to [0, 1] ---
     for col in FEATURE_COLS:
         if col in features.columns:
@@ -588,7 +652,8 @@ def _get_latest_fins(fins: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
                         prices: pd.DataFrame, fins: pd.DataFrame,
-                        margin: pd.DataFrame, short: pd.DataFrame) -> pd.DataFrame:
+                        margin: pd.DataFrame, short: pd.DataFrame,
+                        short_sale: pd.DataFrame = None) -> pd.DataFrame:
     """Build historical cross-sections with forward returns as targets."""
     log.info("Building training data (rolling cross-sections)...")
 
@@ -652,6 +717,20 @@ def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
         short_pit = short[["S33", "Date", "sector_short_ratio"]].copy()
         short_pit = short_pit.sort_values("Date")
         log.info(f"  Short PIT records: {len(short_pit)}")
+
+    # --- Pre-compute individual short-sale lookup (point-in-time) ---
+    short_sale_pit = pd.DataFrame()
+    if short_sale is not None and len(short_sale) > 0:
+        ss = short_sale.copy()
+        ss["DiscDate"] = pd.to_datetime(ss["DiscDate"], errors="coerce")
+        ss["ShrtPosToSO"] = pd.to_numeric(ss["ShrtPosToSO"], errors="coerce")
+        # Latest short position ratio per (Code, DiscDate)
+        short_sale_pit = (ss.dropna(subset=["DiscDate"])
+                          .sort_values("DiscDate")
+                          .groupby(["Code", "DiscDate"])["ShrtPosToSO"]
+                          .last().reset_index())
+        short_sale_pit = short_sale_pit.sort_values("DiscDate")
+        log.info(f"  Short-sale PIT records: {len(short_sale_pit)}")
 
     # --- Sector map (Code -> S33) for short-sell ratio ---
     sector_map = {}
@@ -723,6 +802,14 @@ def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
                     short_latest[["S33", "sector_short_ratio"]],
                     left_on="_s33", right_on="S33", how="left")
                 df_snap.drop(columns=["_s33", "S33"], inplace=True, errors="ignore")
+
+        # --- Merge individual stock short position ratio (point-in-time) ---
+        if len(short_sale_pit) > 0:
+            ss_before = short_sale_pit[short_sale_pit["DiscDate"] <= dt]
+            if len(ss_before) > 0:
+                ss_latest = ss_before.groupby("Code")["ShrtPosToSO"].last().reset_index()
+                ss_latest.rename(columns={"ShrtPosToSO": "short_position_ratio"}, inplace=True)
+                df_snap = df_snap.merge(ss_latest, on="Code", how="left")
 
         # Rank-normalize features
         for col in FEATURE_COLS:
@@ -862,7 +949,7 @@ def main():
     jq = JQuantsClient(api_key)
 
     if args.mode in ("full", "fetch"):
-        listed, prices, fins, margin, short = fetch_all_data(jq)
+        listed, prices, fins, margin, short, short_sale = fetch_all_data(jq)
     else:
         # Load from cache
         listed = pd.read_parquet(CACHE_DIR / "listed.parquet")
@@ -873,9 +960,11 @@ def main():
         margin = pd.read_parquet(margin_path) if margin_path.exists() else pd.DataFrame()
         short_path = CACHE_DIR / "short_ratio.parquet"
         short = pd.read_parquet(short_path) if short_path.exists() else pd.DataFrame()
+        ss_path = CACHE_DIR / "short_sale.parquet"
+        short_sale = pd.read_parquet(ss_path) if ss_path.exists() else pd.DataFrame()
 
     if args.mode in ("full", "train"):
-        train_df = build_training_data(jq, listed, prices, fins, margin, short)
+        train_df = build_training_data(jq, listed, prices, fins, margin, short, short_sale)
         if len(train_df) == 0:
             log.error("No training data. Check data fetch.")
             sys.exit(1)
@@ -884,7 +973,7 @@ def main():
         model, model_features = None, None
 
     if args.mode in ("full", "submit"):
-        features = build_features(listed, prices, fins, margin, short)
+        features = build_features(listed, prices, fins, margin, short, short_sale)
         if len(features) == 0:
             log.error("No features built.")
             sys.exit(1)
