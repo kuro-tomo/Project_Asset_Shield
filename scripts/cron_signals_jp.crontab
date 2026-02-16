@@ -1,0 +1,26 @@
+# =============================================================================
+# Numerai Signals JP — Weekly Submission
+# =============================================================================
+# Rounds open Saturday, close Monday. Submit Saturday morning JST.
+#
+# Schedule: Every Saturday at 10:00 JST (local time, after pmset wake at 9:55)
+#
+# To install:
+#   crontab -l > /tmp/crontab_backup.txt          # backup current crontab
+#   crontab /Users/MBP/Desktop/Project_Asset_Shield/scripts/cron_signals_jp.crontab
+#
+# Or to merge with existing crontab:
+#   (crontab -l 2>/dev/null; cat /Users/MBP/Desktop/Project_Asset_Shield/scripts/cron_signals_jp.crontab) | crontab -
+#
+# To verify:
+#   crontab -l
+#
+# To check logs:
+#   tail -100 /Users/MBP/Desktop/Project_Asset_Shield/data/numerai_signals_jp/cron.log
+#
+# Note: macOS may require granting "Full Disk Access" to cron in
+#       System Settings > Privacy & Security > Full Disk Access
+# =============================================================================
+
+# m  h  dom mon dow  command
+0    10 *   *   6    /Users/MBP/Desktop/Project_Asset_Shield/scripts/cron_signals_jp.sh

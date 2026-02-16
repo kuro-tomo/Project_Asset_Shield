@@ -1,0 +1,5 @@
+# X Bot JP - 機関投資家 空売り動向トラッカー (@quant_gunshi)
+# Posts to X at 7:30 AM JST on weekdays (J-Quants updates at 17:30 previous day)
+# Monday: also runs weekly institution ranking
+# 1st of month: also runs monthly report
+30   7  *   *   1-5    /Users/MBP/Desktop/Project_Asset_Shield/scripts/cron_x_bot.sh daily
