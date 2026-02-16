@@ -189,11 +189,35 @@ class JQuantsClient:
         return self._get_all("/markets/short-sale-report", params)
 
     def get_short_ratio(self, date: Optional[str] = None) -> List[Dict]:
-        """GET /markets/short-ratio — for trading date detection."""
+        """GET /markets/short-ratio — sector short-sell ratio."""
         params: Dict[str, str] = {}
         if date:
             params["date"] = date
         return self._get_all("/markets/short-ratio", params)
+
+    def get_margin_interest(self, date: Optional[str] = None,
+                            code: Optional[str] = None) -> List[Dict]:
+        """GET /markets/margin-interest — weekly margin trading balances."""
+        params: Dict[str, str] = {}
+        if date:
+            params["date"] = date
+        if code:
+            params["code"] = code
+        return self._get_all("/markets/margin-interest", params)
+
+    def get_prices(self, date: Optional[str] = None, code: Optional[str] = None,
+                   from_: Optional[str] = None, to_: Optional[str] = None) -> List[Dict]:
+        """GET /equities/bars/daily — daily OHLCV."""
+        params: Dict[str, str] = {}
+        if date:
+            params["date"] = date
+        if code:
+            params["code"] = code
+        if from_:
+            params["from"] = from_
+        if to_:
+            params["to"] = to_
+        return self._get_all("/equities/bars/daily", params)
 
 
 # ===================================================================
@@ -234,6 +258,22 @@ class TrackerDB:
     CREATE INDEX IF NOT EXISTS idx_disc_ss ON disclosures(ss_name);
     CREATE INDEX IF NOT EXISTS idx_posts_date ON posts(date);
     CREATE INDEX IF NOT EXISTS idx_posts_type ON posts(post_type);
+
+    CREATE TABLE IF NOT EXISTS verification (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        signal_date TEXT NOT NULL,
+        code TEXT NOT NULL,
+        company_name TEXT,
+        num_institutions INTEGER,
+        signal_ratio REAL,
+        price_at_signal REAL,
+        price_5d REAL,
+        price_20d REAL,
+        ret_5d REAL,
+        ret_20d REAL,
+        verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_verif_date ON verification(signal_date);
     """
 
     def __init__(self, db_path: Path = DB_PATH):
@@ -288,6 +328,58 @@ class TrackerDB:
             "SELECT * FROM disclosures WHERE disc_date BETWEEN ? AND ? ORDER BY disc_date",
             (from_date, to_date),
         ).fetchall()
+
+    def insert_verification(self, rec: Dict):
+        self.conn.execute(
+            "INSERT INTO verification (signal_date, code, company_name, num_institutions, "
+            "signal_ratio, price_at_signal, price_5d, price_20d, ret_5d, ret_20d) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (rec["signal_date"], rec["code"], rec.get("company_name"),
+             rec.get("num_institutions"), rec.get("signal_ratio"),
+             rec.get("price_at_signal"), rec.get("price_5d"), rec.get("price_20d"),
+             rec.get("ret_5d"), rec.get("ret_20d")),
+        )
+        self.conn.commit()
+
+    def has_verification(self, signal_date: str, code: str) -> bool:
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM verification WHERE signal_date=? AND code=?",
+            (signal_date, code),
+        ).fetchone()
+        return row[0] > 0
+
+    def get_verification_stats(self, from_date: str, to_date: str) -> Dict[str, Any]:
+        rows = self.conn.execute(
+            "SELECT * FROM verification WHERE signal_date BETWEEN ? AND ?",
+            (from_date, to_date),
+        ).fetchall()
+        if not rows:
+            return {"count": 0}
+        rets_5d = [r["ret_5d"] for r in rows if r["ret_5d"] is not None]
+        rets_20d = [r["ret_20d"] for r in rows if r["ret_20d"] is not None]
+        hit_5d = sum(1 for r in rets_5d if r < 0) / len(rets_5d) * 100 if rets_5d else 0
+        hit_20d = sum(1 for r in rets_20d if r < 0) / len(rets_20d) * 100 if rets_20d else 0
+        avg_5d = sum(rets_5d) / len(rets_5d) * 100 if rets_5d else 0
+        avg_20d = sum(rets_20d) / len(rets_20d) * 100 if rets_20d else 0
+        return {
+            "count": len(rows),
+            "hit_rate_5d": round(hit_5d, 1),
+            "hit_rate_20d": round(hit_20d, 1),
+            "avg_ret_5d": round(avg_5d, 2),
+            "avg_ret_20d": round(avg_20d, 2),
+        }
+
+    def get_concentrated_dates(self, from_date: str, to_date: str) -> List[Dict]:
+        """Get past concentrated short signals for verification."""
+        rows = self.conn.execute(
+            "SELECT disc_date, code, company_name, COUNT(DISTINCT ss_name) as n_inst, "
+            "SUM(ratio) as total_ratio FROM disclosures "
+            "WHERE disc_date BETWEEN ? AND ? "
+            "GROUP BY disc_date, code HAVING n_inst >= 3 "
+            "ORDER BY disc_date",
+            (from_date, to_date),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_monthly_stats(self, year: int, month: int) -> Dict[str, Any]:
         prefix = f"{year}-{month:02d}"
@@ -474,6 +566,135 @@ def find_concentrated_shorts(disclosures: List[Dict]) -> List[Dict]:
 
 
 # ===================================================================
+# Verification & Analytics
+# ===================================================================
+def verify_past_signals(client: JQuantsClient, db: TrackerDB, lookback_days: int = 30):
+    """Verify past concentrated short signals by checking subsequent price moves."""
+    today = datetime.now()
+    verify_from = (today - timedelta(days=lookback_days + 25)).strftime("%Y-%m-%d")
+    verify_to = (today - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    signals = db.get_concentrated_dates(verify_from, verify_to)
+    verified = 0
+    for sig in signals:
+        code = sig["code"]
+        sig_date = sig["disc_date"]
+        if db.has_verification(sig_date, code):
+            continue
+        try:
+            prices = client.get_prices(
+                code=code,
+                from_=sig_date.replace("-", ""),
+                to_=(today).strftime("%Y%m%d"),
+            )
+            if not prices:
+                continue
+            df = pd.DataFrame(prices)
+            df["Date"] = pd.to_datetime(df["Date"])
+            df["AdjC"] = pd.to_numeric(df["AdjC"], errors="coerce")
+            df = df.sort_values("Date").dropna(subset=["AdjC"])
+            if len(df) < 2:
+                continue
+            p0 = df["AdjC"].iloc[0]
+            p5 = df["AdjC"].iloc[min(5, len(df) - 1)]
+            p20 = df["AdjC"].iloc[min(20, len(df) - 1)] if len(df) > 5 else None
+            ret_5d = (p5 / p0 - 1) if p0 > 0 else None
+            ret_20d = (p20 / p0 - 1) if p20 and p0 > 0 else None
+            db.insert_verification({
+                "signal_date": sig_date, "code": code,
+                "company_name": sig.get("company_name"),
+                "num_institutions": sig.get("n_inst"),
+                "signal_ratio": sig.get("total_ratio"),
+                "price_at_signal": p0, "price_5d": p5, "price_20d": p20,
+                "ret_5d": ret_5d, "ret_20d": ret_20d,
+            })
+            verified += 1
+        except Exception as e:
+            log.warning("Verify failed for %s %s: %s", code, sig_date, e)
+    if verified:
+        log.info("Verified %d signals", verified)
+    return verified
+
+
+def detect_anomalies(db: TrackerDB, disc_date: str, disclosures: List[Dict]) -> List[Dict]:
+    """Detect stocks with unusual short position changes."""
+    from collections import defaultdict
+    # Get 30-day history for comparison
+    dt = datetime.strptime(disc_date, "%Y-%m-%d")
+    hist_from = (dt - timedelta(days=30)).strftime("%Y-%m-%d")
+    hist_rows = db.get_disclosures_range(hist_from, disc_date)
+
+    # Build historical avg ratio per stock
+    hist_ratios: Dict[str, List[float]] = defaultdict(list)
+    for r in hist_rows:
+        if r["disc_date"] != disc_date:
+            hist_ratios[r["code"]].append(r["ratio"])
+
+    anomalies = []
+    for d in disclosures:
+        code = d["code"]
+        hist = hist_ratios.get(code, [])
+        if len(hist) < 3:
+            continue
+        avg = sum(hist) / len(hist)
+        std = (sum((x - avg) ** 2 for x in hist) / len(hist)) ** 0.5
+        if std > 0 and abs(d["ratio"] - avg) > 2 * std:
+            anomalies.append({
+                **d,
+                "avg_ratio": round(avg, 3),
+                "std": round(std, 3),
+                "z_score": round((d["ratio"] - avg) / std, 1),
+            })
+    anomalies.sort(key=lambda x: abs(x["z_score"]), reverse=True)
+    return anomalies[:5]
+
+
+def calculate_sentiment(disclosures: List[Dict], db: TrackerDB,
+                        disc_date: str) -> Dict[str, Any]:
+    """Calculate overall market short-selling sentiment."""
+    new_count = sum(1 for d in disclosures if d["change_type"] == "new")
+    inc_count = sum(1 for d in disclosures if d["change_type"] == "increase")
+    dec_count = sum(1 for d in disclosures if d["change_type"] == "decrease")
+    total = len(disclosures)
+
+    aggression = (new_count + inc_count) / total * 100 if total > 0 else 50
+
+    # Compare to 7-day average
+    dt = datetime.strptime(disc_date, "%Y-%m-%d")
+    hist_from = (dt - timedelta(days=7)).strftime("%Y-%m-%d")
+    hist_rows = db.get_disclosures_range(hist_from, disc_date)
+    hist_other = [r for r in hist_rows if r["disc_date"] != disc_date]
+    if hist_other:
+        hist_agg = sum(1 for r in hist_other if r["change_type"] in ("new", "increase"))
+        hist_agg_pct = hist_agg / len(hist_other) * 100
+        trend = aggression - hist_agg_pct
+    else:
+        hist_agg_pct = 50
+        trend = 0
+
+    if aggression > 55:
+        label = "弱気"
+        emoji = "\U0001f43b"
+    elif aggression < 40:
+        label = "強気"
+        emoji = "\U0001f402"
+    else:
+        label = "中立"
+        emoji = "\u2696\ufe0f"
+
+    return {
+        "aggression": round(aggression, 1),
+        "trend": round(trend, 1),
+        "label": label,
+        "emoji": emoji,
+        "new": new_count,
+        "increase": inc_count,
+        "decrease": dec_count,
+        "total": total,
+    }
+
+
+# ===================================================================
 # Tweet Formatting
 # ===================================================================
 def format_daily_changes(disclosures: List[Dict], date: str) -> str:
@@ -579,14 +800,73 @@ def format_weekly_tweet(db: TrackerDB, end_date: str) -> str:
     return text
 
 
-def format_monthly_tweet(stats: Dict) -> str:
-    """Format monthly summary tweet."""
+def format_verification_tweet(stats: Dict, end_date: str) -> str:
+    """Format weekly verification tweet with hit rate."""
+    m, d = end_date[5:7].lstrip("0"), end_date[8:10].lstrip("0")
+    if stats["count"] == 0:
+        return ""
+    lines = [
+        f"\u2705週次検証レポート({m}/{d})",
+        f"機関集中銘柄{stats['count']}件の追跡結果:",
+        f"5日的中率: {stats['hit_rate_5d']}% (平均{stats['avg_ret_5d']:+.1f}%)",
+    ]
+    if stats.get("hit_rate_20d"):
+        lines.append(f"20日的中率: {stats['hit_rate_20d']}% (平均{stats['avg_ret_20d']:+.1f}%)")
+    lines.append(f"詳細→ {NOTE_URL}")
+    lines.append("#日本株 #機関空売り")
+    text = "\n".join(lines)
+    if len(text) > MAX_TWEET_LEN:
+        text = text[:MAX_TWEET_LEN - 1] + "\u2026"
+    return text
+
+
+def format_anomaly_tweet(anomalies: List[Dict], date: str) -> str:
+    """Format anomaly detection tweet."""
+    if not anomalies:
+        return ""
+    m, d = date[5:7].lstrip("0"), date[8:10].lstrip("0")
+    lines = [f"\u26a0\ufe0f空売り異常検知({m}/{d})"]
+    for a in anomalies[:3]:
+        direction = "\u2b06\ufe0f急増" if a["z_score"] > 0 else "\u2b07\ufe0f急減"
+        lines.append(
+            f"{direction} {shorten_company(a['company_name'])}({a['code_4']}) "
+            f"{a['ratio']:.2f}% (平均{a['avg_ratio']:.2f}%)"
+        )
+    lines.append("#日本株 #機関空売り")
+    text = "\n".join(lines)
+    if len(text) > MAX_TWEET_LEN:
+        text = text[:MAX_TWEET_LEN - 1] + "\u2026"
+    return text
+
+
+def format_sentiment_tweet(sentiment: Dict, date: str) -> str:
+    """Format market sentiment barometer tweet."""
+    m, d = date[5:7].lstrip("0"), date[8:10].lstrip("0")
+    trend_arrow = "\u2197\ufe0f" if sentiment["trend"] > 2 else "\u2198\ufe0f" if sentiment["trend"] < -2 else "\u27a1\ufe0f"
+    lines = [
+        f"{sentiment['emoji']}空売りセンチメント({m}/{d}): {sentiment['label']}",
+        f"攻勢度: {sentiment['aggression']:.0f}% {trend_arrow}",
+        f"新規{sentiment['new']} 増加{sentiment['increase']} 減少{sentiment['decrease']}",
+        f"計{sentiment['total']}件",
+        "#日本株 #機関空売り",
+    ]
+    text = "\n".join(lines)
+    if len(text) > MAX_TWEET_LEN:
+        text = text[:MAX_TWEET_LEN - 1] + "\u2026"
+    return text
+
+
+def format_monthly_tweet(stats: Dict, verif_stats: Optional[Dict] = None) -> str:
+    """Format monthly summary tweet with scorecard."""
     y, m = stats["year"], stats["month"]
     lines = [
-        f"\U0001f4cb月次機関空売りレポート({y}年{m}月)",
+        f"\U0001f4cb月次スコアカード({y}年{m}月)",
         f"開示数: {stats['total_disclosures']}件",
         f"新規: {stats['new_positions']} 増加: {stats['increases']} 減少: {stats['decreases']}",
     ]
+    if verif_stats and verif_stats.get("count", 0) > 0:
+        lines.append(f"集中銘柄的中率: {verif_stats['hit_rate_5d']}%(5日) {verif_stats['hit_rate_20d']}%(20日)")
+        lines.append(f"平均α: {verif_stats['avg_ret_5d']:+.1f}%(5日) {verif_stats['avg_ret_20d']:+.1f}%(20日)")
     if stats["top_institutions"]:
         lines.append("最活発機関:")
         for name, cnt in stats["top_institutions"][:3]:
@@ -661,7 +941,8 @@ def post_tweet(text: str, dry_run: bool = False) -> Optional[str]:
 # ===================================================================
 # Chart Generation (for note articles)
 # ===================================================================
-def generate_charts(disclosures: List[Dict], date: str):
+def generate_charts(disclosures: List[Dict], date: str,
+                    client: Optional[JQuantsClient] = None):
     """Generate charts for note articles."""
     try:
         import matplotlib
@@ -718,7 +999,36 @@ def generate_charts(disclosures: List[Dict], date: str):
     plt.close()
     log.info("Saved: %s", path)
 
-    # 3. Top shorted stocks
+    # 3. Sector heatmap (if short-ratio data available)
+    try:
+        sector_data = client.get_short_ratio(date=date.replace("-", "")) if client else []
+    except Exception:
+        sector_data = []
+    if sector_data:
+        import numpy as np
+        sdf = pd.DataFrame(sector_data)
+        for col in ["SellExShortVa", "ShrtWithResVa", "ShrtNoResVa"]:
+            if col in sdf.columns:
+                sdf[col] = pd.to_numeric(sdf[col], errors="coerce")
+        if {"SellExShortVa", "ShrtWithResVa", "ShrtNoResVa", "S33"}.issubset(sdf.columns):
+            sdf["total"] = sdf["SellExShortVa"] + sdf["ShrtWithResVa"] + sdf["ShrtNoResVa"]
+            sdf["short_pct"] = ((sdf["ShrtWithResVa"] + sdf["ShrtNoResVa"]) / sdf["total"] * 100).replace(
+                [float("inf"), float("-inf")], float("nan"))
+            sdf = sdf.dropna(subset=["short_pct"]).sort_values("short_pct", ascending=True)
+            if len(sdf) > 0:
+                fig, ax = plt.subplots(figsize=(10, max(6, len(sdf) * 0.3)))
+                colors_hm = ["#44aa44" if v < 30 else "#ff8800" if v < 50 else "#ff4444"
+                             for v in sdf["short_pct"]]
+                ax.barh(sdf["S33"].values, sdf["short_pct"].values, color=colors_hm)
+                ax.set_xlabel("空売り比率 (%)")
+                ax.set_title(f"セクター別 空売り比率 ({date})")
+                plt.tight_layout()
+                path = CHART_DIR / f"{date}_sector_heatmap.png"
+                plt.savefig(path, dpi=150)
+                plt.close()
+                log.info("Saved: %s", path)
+
+    # 4. Top shorted stocks
     stock_ratios: Dict[str, float] = {}
     for d in disclosures:
         key = f"{shorten_company(d['company_name'])}({d['code_4']})"
@@ -793,6 +1103,7 @@ def run_daily(client: JQuantsClient, db: TrackerDB, dry_run: bool = False,
                     "decrease": len([d for d in disclosures if d["change_type"] == "decrease"])})
 
     # --- Tweet 2: Concentrated shorts (if any) ---
+    conc_tid = None
     concentrated = find_concentrated_shorts(disclosures)
     if concentrated:
         if daily_tid and not dry_run:
@@ -804,13 +1115,33 @@ def run_daily(client: JQuantsClient, db: TrackerDB, dry_run: bool = False,
                        [{"code": c["code_4"], "count": c["count"],
                          "total_ratio": c["total_ratio"]} for c in concentrated[:5]])
 
+    # --- Tweet 3: Sentiment barometer ---
+    sentiment = calculate_sentiment(disclosures, db, date)
+    last_tid = conc_tid or daily_tid
+    if last_tid and not dry_run:
+        time.sleep(30)
+    sent_text = format_sentiment_tweet(sentiment, date)
+    sent_tid = post_tweet(sent_text, dry_run=dry_run)
+    db.insert_post(date, "sentiment", sent_text, sent_tid, sentiment)
+
+    # --- Tweet 4: Anomaly detection (if any) ---
+    anomalies = detect_anomalies(db, date, disclosures)
+    if anomalies:
+        if sent_tid and not dry_run:
+            time.sleep(30)
+        anom_text = format_anomaly_tweet(anomalies, date)
+        if anom_text:
+            anom_tid = post_tweet(anom_text, dry_run=dry_run)
+            db.insert_post(date, "anomaly", anom_text, anom_tid,
+                           [{"code": a["code_4"], "z": a["z_score"]} for a in anomalies])
+
     # --- Charts ---
-    generate_charts(disclosures, date)
+    generate_charts(disclosures, date, client=client)
 
 
 def run_weekly(client: JQuantsClient, db: TrackerDB, dry_run: bool = False,
                target_date: Optional[str] = None):
-    """Weekly institution ranking."""
+    """Weekly institution ranking + verification report."""
     date = get_latest_disc_date(client, target_date)
     if not date:
         return
@@ -819,13 +1150,29 @@ def run_weekly(client: JQuantsClient, db: TrackerDB, dry_run: bool = False,
         log.info("Already posted weekly for %s. Skipping.", date)
         return
 
+    # --- Tweet 1: Weekly ranking ---
     text = format_weekly_tweet(db, date)
     tid = post_tweet(text, dry_run=dry_run)
     db.insert_post(date, "weekly", text, tid)
 
+    # --- Verify past signals ---
+    verified = verify_past_signals(client, db)
+
+    # --- Tweet 2: Verification report ---
+    dt = datetime.strptime(date, "%Y-%m-%d")
+    verif_from = (dt - timedelta(days=30)).strftime("%Y-%m-%d")
+    verif_stats = db.get_verification_stats(verif_from, date)
+    if verif_stats["count"] > 0:
+        if tid and not dry_run:
+            time.sleep(30)
+        verif_text = format_verification_tweet(verif_stats, date)
+        if verif_text:
+            verif_tid = post_tweet(verif_text, dry_run=dry_run)
+            db.insert_post(date, "verification", verif_text, verif_tid, verif_stats)
+
 
 def run_monthly(db: TrackerDB, dry_run: bool = False):
-    """Monthly summary for previous month."""
+    """Monthly summary with verification scorecard."""
     now = datetime.now()
     if now.month == 1:
         year, month = now.year - 1, 12
@@ -837,7 +1184,11 @@ def run_monthly(db: TrackerDB, dry_run: bool = False):
         log.info("No disclosures for %04d-%02d. Skipping monthly.", year, month)
         return
 
-    text = format_monthly_tweet(stats)
+    # Get verification stats for the month
+    prefix = f"{year}-{month:02d}"
+    verif_stats = db.get_verification_stats(f"{prefix}-01", f"{prefix}-31")
+
+    text = format_monthly_tweet(stats, verif_stats=verif_stats)
     tid = post_tweet(text, dry_run=dry_run)
     db.insert_post(f"{year}-{month:02d}-01", "monthly", text, tid, stats)
 
