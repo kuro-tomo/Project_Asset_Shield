@@ -3,14 +3,8 @@ import numpy as np
 
 
 class AssetShieldV8(QCAlgorithm):
-    """
-    Asset Shield V8 - Core-Satellite
-    =================================
-    Core:  80% SPY (beta capture, never miss benchmark)
-    Sat:   50% factor portfolio (V6 Pro alpha overlay)
-    Total: ~130% in neutral, regime-adjusted 40-140%
-    Kill-switch protects satellite only; SPY core always held.
-    """
+
+    VERSION = "8.2"
 
     def Initialize(self):
         self.SetStartDate(2010, 1, 1)
@@ -27,7 +21,6 @@ class AssetShieldV8(QCAlgorithm):
         self.AddUniverse(self.CoarseFilter, self.FineFilter)
         self.spy = self.AddEquity("SPY", Resolution.Daily).Symbol
 
-        # === Parameters ===
         self.MAX_POS = 10
         self.REBAL_DAYS = 21
         self.TRAIL_STOP = 0.08
@@ -36,43 +29,40 @@ class AssetShieldV8(QCAlgorithm):
         self.MAX_SECTOR_FRAC = 0.30
         self.LOOKBACK = 252
 
-        # V6 Pro factor weights (proven best Sharpe)
         self.W_MOM = 0.35
         self.W_SMOM = 0.10
         self.W_VOL = 0.15
         self.W_VAL = 0.20
         self.W_QUAL = 0.20
 
-        # === Caches ===
         self.active = set()
         self.sector_cache = {}
         self.fund_cache = {}
         self.trail_highs = {}
 
-        # === State ===
         self.hwm = 100_000
         self.kill = False
         self.kill_date = None
         self.recovery = 0
         self.regime = "NEUTRAL"
         self.trades = []
-        self.day_count = 0
+        self.day_count = self.REBAL_DAYS - 1 if self.LiveMode else 0
 
-        # Walk-forward
         self.IS_END = datetime(2017, 12, 31)
         self.phase_rets = {"IS": [], "OOS": []}
         self.prev_eq = 100_000
+        self._cache_cleanup_counter = 0
 
-        # === Notifications ===
         self.NOTIFY_EMAIL = "mikasa2564@gmail.com"
         self.prev_regime = "NEUTRAL"
+
+        self.Debug(f"[INIT] V{self.VERSION} Live={self.LiveMode}")
 
         self.Schedule.On(
             self.DateRules.EveryDay(),
             self.TimeRules.AfterMarketOpen("SPY", 30),
             self.DailyCheck
         )
-        # Weekly summary every Friday 30 min before close
         self.Schedule.On(
             self.DateRules.Every(DayOfWeek.Friday),
             self.TimeRules.BeforeMarketClose("SPY", 30),
@@ -80,18 +70,46 @@ class AssetShieldV8(QCAlgorithm):
         )
 
     # ==========================================================
-    # Universe Selection (same as V6 Pro)
+    # Safe Helpers
+    # ==========================================================
+
+    def _is_invested(self, symbol):
+        try:
+            return self.Portfolio[symbol].Invested
+        except:
+            return False
+
+    def _safe_liquidate(self, symbol, tag=""):
+        try:
+            if self.Portfolio[symbol].Invested:
+                self.Liquidate(symbol, tag)
+        except:
+            pass
+
+    def _invested_symbols(self):
+        result = []
+        try:
+            for s in list(self.Portfolio.Keys):
+                try:
+                    if self.Portfolio[s].Invested:
+                        result.append(s)
+                except:
+                    continue
+        except:
+            pass
+        return result
+
+    # ==========================================================
+    # Universe
     # ==========================================================
 
     def CoarseFilter(self, coarse):
         filtered = [
             x for x in coarse
-            if x.HasFundamentalData
-            and x.Price > 5
-            and x.DollarVolume > 5_000_000
+            if x.HasFundamentalData and x.Price > 5 and x.DollarVolume > 5_000_000
         ]
         by_volume = sorted(filtered, key=lambda x: x.DollarVolume, reverse=True)
-        return [x.Symbol for x in by_volume[:200]]
+        return [x.Symbol for x in by_volume[:150]]
 
     def FineFilter(self, fine):
         candidates = []
@@ -103,22 +121,11 @@ class AssetShieldV8(QCAlgorithm):
                 sector = f.AssetClassification.MorningstarSectorCode
             except:
                 continue
-
-            if pe <= 0 or pe > 200:
+            if pe <= 0 or pe > 200 or roe_val <= 0 or mktcap < 2_000_000_000:
                 continue
-            if roe_val <= 0:
-                continue
-            if mktcap < 2_000_000_000:
-                continue
-
             candidates.append(f)
             self.sector_cache[f.Symbol] = sector
-            self.fund_cache[f.Symbol] = {
-                "pe": pe,
-                "roe": roe_val,
-                "mktcap": mktcap,
-            }
-
+            self.fund_cache[f.Symbol] = {"pe": pe, "roe": roe_val, "mktcap": mktcap}
         by_cap = sorted(candidates, key=lambda x: x.MarketCap, reverse=True)
         return [x.Symbol for x in by_cap[:100]]
 
@@ -127,15 +134,18 @@ class AssetShieldV8(QCAlgorithm):
             self.active.add(s.Symbol)
         for s in changes.RemovedSecurities:
             self.active.discard(s.Symbol)
-            if self.Portfolio[s.Symbol].Invested and s.Symbol != self.spy:
-                self.Liquidate(s.Symbol, "UNIVERSE_EXIT")
+            if s.Symbol != self.spy:
+                self._safe_liquidate(s.Symbol, "UNIVERSE_EXIT")
 
     # ==========================================================
-    # Core-Satellite Exposure by Regime
+    # Regime
     # ==========================================================
 
     def _detect_regime(self):
-        hist = self.History([self.spy], 60, Resolution.Daily)
+        try:
+            hist = self.History([self.spy], 60, Resolution.Daily)
+        except:
+            return
         if hist.empty or len(hist) < 40:
             return
         closes = hist["close"].values
@@ -144,7 +154,6 @@ class AssetShieldV8(QCAlgorithm):
         trend = float(closes[-1] / closes[0] - 1)
 
         old_regime = self.regime
-
         if vol > 0.40:
             self.regime = "CRISIS"
         elif vol > 0.25 and trend < -0.03:
@@ -156,43 +165,48 @@ class AssetShieldV8(QCAlgorithm):
         else:
             self.regime = "NEUTRAL"
 
-        # Notify on regime change to CRISIS or BEAR
         if self.regime != old_regime and self.regime in ("CRISIS", "BEAR"):
             eq = self.Portfolio.TotalPortfolioValue
             spy_w, sat_b = self._get_allocations()
             self._alert(
                 f"REGIME -> {self.regime}",
                 f"Regime changed: {old_regime} -> {self.regime}\n"
-                f"SPY Vol(20d): {vol:.1%}  Trend(60d): {trend:+.1%}\n"
-                f"Equity: ${eq:,.0f}\n"
-                f"Allocation: SPY {spy_w:.0%} + Satellite {sat_b:.0%}"
+                f"Vol: {vol:.1%} Trend: {trend:+.1%}\nEquity: ${eq:,.0f}"
             )
 
     def _get_allocations(self):
-        """Returns (spy_weight, factor_budget) by regime."""
         return {
-            "CRISIS":     (0.40, 0.00),
-            "BEAR":       (0.60, 0.15),
-            "NEUTRAL":    (0.80, 0.50),
-            "BULL":       (0.80, 0.55),
+            "CRISIS": (0.40, 0.00), "BEAR": (0.60, 0.15),
+            "NEUTRAL": (0.80, 0.50), "BULL": (0.80, 0.55),
             "SUPER_BULL": (0.80, 0.60),
         }.get(self.regime, (0.80, 0.50))
 
     # ==========================================================
-    # Daily Check
+    # Daily Check — wrapped in top-level try/except
     # ==========================================================
 
     def DailyCheck(self):
+        try:
+            self._daily_check_impl()
+        except BaseException as e:
+            self.Debug(f"[CAUGHT] DailyCheck error: {e}")
+
+    def _daily_check_impl(self):
         if self.IsWarmingUp:
             return
         self.day_count += 1
         eq = self.Portfolio.TotalPortfolioValue
 
-        if self.prev_eq > 0:
+        if self.prev_eq > 0 and not self.LiveMode:
             r = eq / self.prev_eq - 1
             phase = "IS" if self.Time <= self.IS_END else "OOS"
             self.phase_rets[phase].append(r)
         self.prev_eq = eq
+
+        if self.LiveMode:
+            self._cache_cleanup_counter += 1
+            if self._cache_cleanup_counter % (self.REBAL_DAYS * 5) == 0:
+                self._cleanup_caches()
 
         self.hwm = max(self.hwm, eq)
         dd = (self.hwm - eq) / self.hwm if self.hwm > 0 else 0
@@ -203,27 +217,22 @@ class AssetShieldV8(QCAlgorithm):
         if self.day_count % self.REBAL_DAYS != 0:
             return
 
-        held = sum(1 for s in self.active if self.Portfolio[s].Invested and s != self.spy)
+        invested = self._invested_symbols()
+        held = sum(1 for s in invested if s != self.spy)
         spy_w, factor_b = self._get_allocations()
-        # Log every 2nd rebalance to reduce message count
         rebal_num = self.day_count // self.REBAL_DAYS
         if rebal_num % 2 == 0:
-            self.Debug(
-                f"[{self.Time.date()}] ${eq:,.0f} DD={dd:.1%} "
-                f"Regime={self.regime} SPY={spy_w:.0%} Sat={factor_b:.0%} "
-                f"Pos={held}"
-            )
+            self.Debug(f"[{self.Time.date()}] ${eq:,.0f} DD={dd:.1%} {self.regime} Pos={held}")
 
         if self.kill and self.recovery == 0:
-            spy_w, _ = self._get_allocations()
-            self.SetHoldings(self.spy, spy_w)
+            self.SetHoldings(self.spy, self._get_allocations()[0])
             return
 
         scale = self.recovery / 4.0 if self.kill else 1.0
         self._rebalance(scale)
 
     # ==========================================================
-    # Kill-Switch (satellite only, SPY core stays)
+    # Kill-Switch
     # ==========================================================
 
     def _kill_switch(self, dd):
@@ -231,28 +240,15 @@ class AssetShieldV8(QCAlgorithm):
             self.kill = True
             self.kill_date = self.Time
             self.recovery = 0
-            self.Debug(f"KILL ON: DD={dd:.1%} (satellite only)")
-
-            # Liquidate satellite positions only, keep SPY
             sat_count = 0
-            for symbol in list(self.Portfolio.Keys):
-                if self.Portfolio[symbol].Invested and symbol != self.spy:
-                    self.Liquidate(symbol)
+            for symbol in self._invested_symbols():
+                if symbol != self.spy:
+                    self._safe_liquidate(symbol)
                     sat_count += 1
             self.trail_highs.clear()
-
-            # Maintain SPY core at crisis level
             self.SetHoldings(self.spy, 0.40)
-
-            eq = self.Portfolio.TotalPortfolioValue
-            self._alert(
-                "KILL-SWITCH ON",
-                f"Drawdown {dd:.1%} exceeded {self.MAX_DD_KILL:.0%} threshold.\n"
-                f"Liquidated {sat_count} satellite positions.\n"
-                f"SPY core maintained at 40%.\n"
-                f"Equity: ${eq:,.0f}  Regime: {self.regime}\n"
-                f"Recovery: 4-step re-entry over ~28 days when regime improves."
-            )
+            self._alert("KILL-SWITCH ON",
+                f"DD {dd:.1%} > {self.MAX_DD_KILL:.0%}. Liquidated {sat_count} sat positions.")
             return
 
         if self.kill and self.kill_date:
@@ -265,81 +261,81 @@ class AssetShieldV8(QCAlgorithm):
                     self.kill = False
                     self.kill_date = None
                     self.hwm = self.Portfolio.TotalPortfolioValue
-                    self.Debug("KILL OFF")
-                    eq = self.Portfolio.TotalPortfolioValue
-                    self._alert(
-                        "KILL-SWITCH OFF",
-                        f"Full recovery complete. Resuming normal operations.\n"
-                        f"Equity: ${eq:,.0f}  Regime: {self.regime}\n"
-                        f"HWM reset to ${self.hwm:,.0f}"
-                    )
+                    self._alert("KILL-SWITCH OFF", "Full recovery complete.")
             else:
                 self.recovery = 0
                 self.kill_date = self.Time
 
     # ==========================================================
-    # Trailing Stop & Take Profit (satellite only)
+    # Trailing Stop & Take Profit
     # ==========================================================
 
     def _check_exits(self):
         for symbol in list(self.trail_highs.keys()):
             if symbol == self.spy:
                 continue
-
-            h = self.Portfolio[symbol]
-            if not h.Invested:
+            if not self._is_invested(symbol):
                 self.trail_highs.pop(symbol, None)
                 continue
-
-            price = h.Price
+            try:
+                h = self.Portfolio[symbol]
+                price = h.Price
+            except:
+                self.trail_highs.pop(symbol, None)
+                continue
             if price <= 0:
                 continue
 
             self.trail_highs[symbol] = max(self.trail_highs.get(symbol, price), price)
             peak = self.trail_highs[symbol]
             drop = (peak - price) / peak if peak > 0 else 0
-
             pnl = h.UnrealizedProfitPercent
             reason = None
-
             if drop > self.TRAIL_STOP:
                 reason = "TRAIL"
             elif pnl > self.TAKE_PROFIT:
                 reason = "TP"
-
             if reason:
-                self.Liquidate(symbol, reason)
+                self._safe_liquidate(symbol, reason)
                 self.trail_highs.pop(symbol, None)
                 self.trades.append({"s": str(symbol), "pnl": float(pnl), "r": reason})
-                # Only log take-profits and big losses to avoid rate limiting
-                if reason == "TP" or pnl < -0.10:
-                    ticker = str(symbol).split(" ")[0] if " " in str(symbol) else str(symbol)
-                    self.Debug(f"{reason} {ticker} {pnl:+.1%}")
 
     # ==========================================================
-    # Core-Satellite Rebalance
+    # Rebalance — with safe History access
     # ==========================================================
 
     def _rebalance(self, scale):
         spy_w, factor_budget = self._get_allocations()
         factor_budget *= scale
-
-        # --- CORE: Always hold SPY ---
         self.SetHoldings(self.spy, spy_w)
 
-        # --- SATELLITE: Factor portfolio ---
         if factor_budget < 0.05:
-            for symbol in list(self.Portfolio.Keys):
-                if self.Portfolio[symbol].Invested and symbol != self.spy:
-                    self.Liquidate(symbol)
+            for symbol in self._invested_symbols():
+                if symbol != self.spy:
+                    self._safe_liquidate(symbol)
                     self.trail_highs.pop(symbol, None)
             return
 
-        syms = [s for s in self.active if s != self.spy]
+        # Build safe symbol list
+        syms = []
+        for s in self.active:
+            if s == self.spy:
+                continue
+            try:
+                sec = self.Securities[s]
+                if sec.IsTradable and sec.Price > 0:
+                    syms.append(s)
+            except:
+                continue
         if len(syms) < 10:
             return
 
-        hist = self.History(syms, self.LOOKBACK, Resolution.Daily)
+        # Safe History call
+        try:
+            hist = self.History(syms, self.LOOKBACK, Resolution.Daily)
+        except:
+            self.Debug("[WARN] History failed")
+            return
         if hist.empty:
             return
 
@@ -361,25 +357,20 @@ class AssetShieldV8(QCAlgorithm):
                 mom = (closes[-1] / closes[0] - 1) if closes[0] > 0 else 0
 
             smom = (closes[-1] / closes[-22] - 1) if len(closes) >= 22 and closes[-22] > 0 else 0
-
             rets = np.diff(closes[-60:]) / closes[-60:-1]
             vol = float(np.std(rets) * np.sqrt(252)) if len(rets) > 10 else 0.3
             daily_vol = float(np.std(rets)) if len(rets) > 10 else 0.02
 
             fc = self.fund_cache.get(symbol, {})
-            pe = fc.get("pe", 0)
-            roe = fc.get("roe", 0)
+            pe, roe = fc.get("pe", 0), fc.get("roe", 0)
             if pe <= 0 or roe <= 0:
                 continue
 
-            sector = self.sector_cache.get(symbol, 0)
-
             scores.append({
-                "symbol": symbol,
-                "mom": mom, "smom": smom,
+                "symbol": symbol, "mom": mom, "smom": smom,
                 "vol": vol, "daily_vol": daily_vol,
                 "pe": pe, "roe": roe,
-                "sector": sector,
+                "sector": self.sector_cache.get(symbol, 0),
             })
 
         if len(scores) < 10:
@@ -396,101 +387,94 @@ class AssetShieldV8(QCAlgorithm):
         quals = z(np.array([s["roe"] for s in scores]))
 
         for i, s in enumerate(scores):
-            s["score"] = (
-                moms[i] * self.W_MOM +
-                smoms[i] * self.W_SMOM +
-                vols[i] * self.W_VOL +
-                vals[i] * self.W_VAL +
-                quals[i] * self.W_QUAL
-            )
+            s["score"] = (moms[i]*self.W_MOM + smoms[i]*self.W_SMOM +
+                         vols[i]*self.W_VOL + vals[i]*self.W_VAL + quals[i]*self.W_QUAL)
 
         scores.sort(key=lambda x: x["score"], reverse=True)
 
-        n = self.MAX_POS
         selected = []
         sec_count = {}
-        max_per_sec = max(2, int(n * self.MAX_SECTOR_FRAC))
-
+        max_per_sec = max(2, int(self.MAX_POS * self.MAX_SECTOR_FRAC))
         for s in scores:
-            if len(selected) >= n:
+            if len(selected) >= self.MAX_POS:
                 break
             sec = s["sector"]
             if sec_count.get(sec, 0) >= max_per_sec:
                 continue
             selected.append(s)
             sec_count[sec] = sec_count.get(sec, 0) + 1
-
         if not selected:
             return
 
-        # Inverse-vol sizing within factor_budget
-        inv_vols = []
-        for s in selected:
-            iv = 1.0 / max(s["daily_vol"], 0.005)
-            inv_vols.append(iv)
-
+        inv_vols = [1.0 / max(s["daily_vol"], 0.005) for s in selected]
         total_iv = sum(inv_vols)
         weights = {}
         for i, s in enumerate(selected):
-            w = (inv_vols[i] / total_iv) * factor_budget
-            weights[s["symbol"]] = min(w, 0.10)  # cap 10% per satellite pos
+            weights[s["symbol"]] = min((inv_vols[i] / total_iv) * factor_budget, 0.10)
 
-        # Sell satellite positions not in target
         target_set = set(weights.keys())
-        for symbol in list(self.Portfolio.Keys):
-            if self.Portfolio[symbol].Invested and symbol not in target_set and symbol != self.spy:
-                self.Liquidate(symbol)
+        for symbol in self._invested_symbols():
+            if symbol not in target_set and symbol != self.spy:
+                self._safe_liquidate(symbol)
                 self.trail_highs.pop(symbol, None)
 
         for symbol, w in weights.items():
-            if symbol not in self.Securities or self.Securities[symbol].Price <= 0:
+            try:
+                sec = self.Securities[symbol]
+                if sec.Price <= 0 or not sec.IsTradable:
+                    continue
+            except:
                 continue
             self.SetHoldings(symbol, w)
             if symbol not in self.trail_highs:
-                self.trail_highs[symbol] = self.Securities[symbol].Price
+                self.trail_highs[symbol] = sec.Price
 
-        total_exp = spy_w + sum(weights.values())
-        rebal_num = self.day_count // self.REBAL_DAYS
-        if rebal_num % 2 == 0:
-            names = [f"{str(s['symbol']).split(' ')[0]}({s['score']:.2f})" for s in selected[:6]]
-            self.Debug(f"  -> SPY {spy_w:.0%} + {len(selected)} sat = {total_exp:.0%} total: {', '.join(names)}...")
+    # ==========================================================
+    # Memory Management
+    # ==========================================================
+
+    def _cleanup_caches(self):
+        keep = set(self.active)
+        for s in self._invested_symbols():
+            keep.add(s)
+        ct = 0
+        for cache in (self.sector_cache, self.fund_cache):
+            stale = [k for k in cache if k not in keep]
+            for k in stale:
+                del cache[k]
+            ct += len(stale)
+        if len(self.trades) > 200:
+            self.trades = self.trades[-200:]
+        if ct > 0:
+            self.Debug(f"[MEM] Purged {ct}")
 
     # ==========================================================
     # Notifications
     # ==========================================================
 
     def _alert(self, subject, body):
-        """Send email notification for critical events."""
         tag = f"[AssetShield] {subject}"
         self.Debug(f"ALERT: {tag}")
         if self.NOTIFY_EMAIL and self.LiveMode:
             self.Notify.Email(self.NOTIFY_EMAIL, tag, body)
 
     def WeeklySummary(self):
-        """Friday afternoon portfolio summary."""
         if self.IsWarmingUp:
             return
         eq = self.Portfolio.TotalPortfolioValue
         dd = (self.hwm - eq) / self.hwm if self.hwm > 0 else 0
         spy_w, sat_b = self._get_allocations()
-        held = sum(1 for s in self.Portfolio.Keys if self.Portfolio[s].Invested and s != self.spy)
+        invested = self._invested_symbols()
+        held = sum(1 for s in invested if s != self.spy)
         ret = eq / 100_000 - 1
-
         summary = (
-            f"Weekly Summary - {self.Time.date()}\n"
-            f"{'='*40}\n"
-            f"Equity:     ${eq:,.0f} ({ret:+.1%})\n"
-            f"Drawdown:   {dd:.1%} (kill at {self.MAX_DD_KILL:.0%})\n"
-            f"Regime:     {self.regime}\n"
-            f"Kill-switch: {'ON (step ' + str(self.recovery) + '/4)' if self.kill else 'OFF'}\n"
-            f"Positions:  SPY + {held} satellite\n"
-            f"Allocation: SPY {spy_w:.0%} + Satellite {sat_b:.0%}\n"
+            f"Weekly {self.Time.date()}\n{'='*40}\n"
+            f"Equity: ${eq:,.0f} ({ret:+.1%})\nDD: {dd:.1%}\n"
+            f"Regime: {self.regime}\nKill: {'ON' if self.kill else 'OFF'}\n"
+            f"Pos: SPY + {held}\nAlloc: SPY {spy_w:.0%} + Sat {sat_b:.0%}"
         )
-
-        # Only send email in live mode, always log for backtest verification
         if self.day_count % (self.REBAL_DAYS * 4) < self.REBAL_DAYS:
-            self.Debug(f"[WEEKLY] ${eq:,.0f} DD={dd:.1%} {self.regime} Pos={held}")
-
+            self.Debug(f"[WEEKLY] ${eq:,.0f} {self.regime} Pos={held}")
         if self.NOTIFY_EMAIL and self.LiveMode:
             self.Notify.Email(self.NOTIFY_EMAIL, f"[AssetShield] Weekly {self.Time.date()}", summary)
 
@@ -505,50 +489,19 @@ class AssetShieldV8(QCAlgorithm):
         cagr = (1 + ret) ** (1 / years) - 1 if years > 0 and ret > -1 else 0
 
         def sharpe(rets):
-            if len(rets) < 20:
-                return 0
-            r = np.array(rets)
-            s = np.std(r)
+            if len(rets) < 20: return 0
+            r = np.array(rets); s = np.std(r)
             return float(np.mean(r) * 252 / (s * np.sqrt(252))) if s > 1e-10 else 0
 
         def maxdd(rets):
-            if not rets:
-                return 0
+            if not rets: return 0
             eq = np.cumprod(1 + np.array(rets))
             pk = np.maximum.accumulate(eq)
             return float(np.max((pk - eq) / pk))
 
         all_r = self.phase_rets["IS"] + self.phase_rets["OOS"]
-        is_sharpe = sharpe(self.phase_rets["IS"])
-        oos_sharpe = sharpe(self.phase_rets["OOS"])
-        full_sharpe = sharpe(all_r)
-        full_dd = maxdd(all_r)
-
-        n = len(self.trades)
-        wins = len([t for t in self.trades if t["pnl"] > 0])
-
-        self.Debug("=" * 65)
-        self.Debug("ASSET SHIELD V8 - CORE-SATELLITE")
-        self.Debug("SPY Core 80% + Factor Satellite 50% | Leveraged Alpha")
-        self.Debug("=" * 65)
-        self.Debug(f"Return:        {ret:+.1%}  CAGR: {cagr:.1%}")
-        self.Debug(f"Equity:        ${eq:,.0f}")
-        self.Debug(f"Max Drawdown:  {full_dd:.1%}")
-        self.Debug(f"Sharpe (full): {full_sharpe:.2f}")
-        self.Debug("-" * 65)
-        self.Debug(f"IS Sharpe:     {is_sharpe:.2f} (2010-2017, {len(self.phase_rets['IS'])} days)")
-        self.Debug(f"OOS Sharpe:    {oos_sharpe:.2f} (2018-2024, {len(self.phase_rets['OOS'])} days)")
-        self.Debug("-" * 65)
-        self.Debug(f"Trades:        {n}  Win: {wins}/{n}={wins/n:.0%}" if n else "No trades")
-        self.Debug(f"Universe:      {len(self.active)} active stocks")
-        self.Debug(f"Fund coverage: {len(self.fund_cache)} stocks with PE/ROE")
-        self.Debug("=" * 65)
-
-        checks = [
-            ("OOS Sharpe > 0.5", oos_sharpe > 0.5),
-            ("Max DD < 25%", full_dd < 0.25),
-            ("CAGR > 12%", cagr > 0.12),
-            ("Trades > 20", n > 20),
-        ]
-        for label, ok in checks:
-            self.Debug(f"  [{'PASS' if ok else 'FAIL'}] {label}")
+        self.Debug("=" * 60)
+        self.Debug(f"V{self.VERSION} Return: {ret:+.1%} CAGR: {cagr:.1%}")
+        self.Debug(f"Sharpe: {sharpe(all_r):.2f} (IS={sharpe(self.phase_rets['IS']):.2f} OOS={sharpe(self.phase_rets['OOS']):.2f})")
+        self.Debug(f"MaxDD: {maxdd(all_r):.1%}")
+        self.Debug("=" * 60)
