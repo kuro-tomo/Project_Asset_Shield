@@ -240,33 +240,73 @@ def fetch_all_data(jq: JQuantsClient, lookback_days: int = PRICE_LOOKBACK_DAYS):
     fins_cache = CACHE_DIR / "fins.parquet"
     codes = listed["Code"].tolist()
     if fins_cache.exists():
-        fins = pd.read_parquet(fins_cache)
-        log.info(f"  Using cached fins: {len(fins)} records")
+        cache_age = (today - datetime.fromtimestamp(fins_cache.stat().st_mtime)).days
+        if cache_age <= 7:
+            fins = pd.read_parquet(fins_cache)
+            log.info(f"  Using cached fins: {len(fins)} records ({cache_age}d old)")
+        else:
+            log.info(f"  Fins cache is {cache_age}d old, refreshing...")
+            fins = _fetch_fins_concurrent(jq, codes)
+            if len(fins) > 0:
+                fins.to_parquet(fins_cache, index=False)
     else:
         fins = _fetch_fins_concurrent(jq, codes)
         if len(fins) > 0:
             fins.to_parquet(fins_cache, index=False)
     log.info(f"  Financial records: {len(fins)}")
 
-    # 4. Margin data (weekly, last 3 months)
+    # 4. Margin data (weekly, last 3 months) — incremental update
     log.info("Fetching margin data...")
     margin_from = (today - timedelta(days=90)).strftime("%Y%m%d")
     margin_cache = CACHE_DIR / "margin.parquet"
     if margin_cache.exists():
-        margin = pd.read_parquet(margin_cache)
-        log.info(f"  Using cached margin: {len(margin)} records")
+        existing = pd.read_parquet(margin_cache)
+        existing["Date"] = pd.to_datetime(existing["Date"]).dt.strftime("%Y%m%d")
+        last_date = existing["Date"].max()
+        if last_date >= to_date:
+            margin = existing
+            log.info(f"  Margin cache is up to date: {len(margin)} records")
+        else:
+            new_from = (datetime.strptime(last_date, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+            log.info(f"  Updating margin from {new_from}...")
+            new_margin = _fetch_margin_by_date(jq, new_from, to_date)
+            margin = pd.concat([existing, new_margin], ignore_index=True).drop_duplicates(
+                subset=["Date", "Code"], keep="last")
+            margin.to_parquet(margin_cache, index=False)
     else:
         margin = _fetch_margin_by_date(jq, margin_from, to_date)
         if len(margin) > 0:
             margin.to_parquet(margin_cache, index=False)
     log.info(f"  Margin records: {len(margin)}")
 
-    # 5. Short-sell ratio by sector (must query by date, not from/to without s33)
+    # 5. Short-sell ratio by sector — incremental update
     log.info("Fetching short-sell ratio...")
     short_cache = CACHE_DIR / "short_ratio.parquet"
     if short_cache.exists():
-        short = pd.read_parquet(short_cache)
-        log.info(f"  Using cached short ratio: {len(short)} records")
+        existing = pd.read_parquet(short_cache)
+        existing["Date"] = pd.to_datetime(existing["Date"]).dt.strftime("%Y%m%d")
+        last_date = existing["Date"].max()
+        if last_date >= to_date:
+            short = existing
+            log.info(f"  Short ratio cache is up to date: {len(short)} records")
+        else:
+            log.info(f"  Updating short ratio from {last_date}...")
+            short_chunks = [existing]
+            cur = datetime.strptime(last_date, "%Y%m%d") + timedelta(days=1)
+            end_dt = datetime.strptime(to_date, "%Y%m%d")
+            while cur <= end_dt:
+                ds = cur.strftime("%Y%m%d")
+                try:
+                    df = jq.get_short_ratio(date=ds)
+                    if len(df) > 0:
+                        short_chunks.append(df)
+                except Exception:
+                    pass
+                cur += timedelta(days=1)
+            short = pd.concat(short_chunks, ignore_index=True).drop_duplicates(
+                subset=["Date", "S33"], keep="last") if short_chunks else pd.DataFrame()
+            if len(short) > 0:
+                short.to_parquet(short_cache, index=False)
     else:
         short_chunks = []
         cur = datetime.strptime(margin_from, "%Y%m%d")
