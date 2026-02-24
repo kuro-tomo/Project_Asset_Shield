@@ -38,6 +38,9 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from shield.edinet_client import EDINETClient
+
 # ---------------------------------------------------------------------------
 # Paths & Constants
 # ---------------------------------------------------------------------------
@@ -274,6 +277,50 @@ class TrackerDB:
         verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_verif_date ON verification(signal_date);
+
+    CREATE TABLE IF NOT EXISTS edinet_bulk_holdings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        doc_id TEXT UNIQUE,
+        sec_code TEXT,
+        issuer_name TEXT,
+        filer_name TEXT,
+        holding_ratio REAL,
+        prev_ratio REAL,
+        change_ratio REAL,
+        purpose TEXT,
+        submit_date TEXT,
+        report_type TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_ebh_sec ON edinet_bulk_holdings(sec_code);
+    CREATE INDEX IF NOT EXISTS idx_ebh_date ON edinet_bulk_holdings(submit_date);
+
+    CREATE TABLE IF NOT EXISTS signal_portfolio (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        signal_date TEXT NOT NULL,
+        code TEXT NOT NULL,
+        company_name TEXT,
+        signal_type TEXT NOT NULL,
+        num_institutions INTEGER,
+        signal_ratio REAL,
+        entry_date TEXT,
+        entry_price REAL,
+        price_5d REAL,
+        price_20d REAL,
+        current_price REAL,
+        ret_5d REAL,
+        ret_20d REAL,
+        ret_current REAL,
+        pnl_5d REAL,
+        pnl_20d REAL,
+        pnl_current REAL,
+        status TEXT DEFAULT 'open',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(signal_date, code, signal_type)
+    );
+    CREATE INDEX IF NOT EXISTS idx_sp_date ON signal_portfolio(signal_date);
+    CREATE INDEX IF NOT EXISTS idx_sp_status ON signal_portfolio(status);
     """
 
     def __init__(self, db_path: Path = DB_PATH):
@@ -414,6 +461,182 @@ class TrackerDB:
             "top_institutions": [(r["ss_name"], r["cnt"]) for r in top_ss],
             "total_posts": total_posts,
         }
+
+    def insert_bulk_holding(self, rec: Dict) -> bool:
+        try:
+            self.conn.execute("""
+                INSERT INTO edinet_bulk_holdings
+                (doc_id, sec_code, issuer_name, filer_name, holding_ratio,
+                 prev_ratio, change_ratio, purpose, submit_date, report_type)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(doc_id) DO UPDATE SET
+                    sec_code = excluded.sec_code,
+                    issuer_name = excluded.issuer_name,
+                    holding_ratio = excluded.holding_ratio,
+                    prev_ratio = excluded.prev_ratio,
+                    change_ratio = excluded.change_ratio,
+                    purpose = excluded.purpose,
+                    report_type = excluded.report_type
+            """, (rec["doc_id"], rec.get("sec_code",""), rec.get("issuer_name",""),
+                  rec.get("filer_name",""), rec.get("holding_ratio"),
+                  rec.get("prev_ratio"), rec.get("change_ratio"),
+                  rec.get("purpose",""), rec.get("submit_date",""),
+                  rec.get("report_type","")))
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
+    def get_recent_bulk_holdings(self, days: int = 7) -> List[Dict]:
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        rows = self.conn.execute(
+            """SELECT * FROM edinet_bulk_holdings
+               WHERE submit_date >= ?
+               ORDER BY submit_date DESC, holding_ratio DESC""",
+            (cutoff,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def has_bulk_holding_post(self, date: str) -> bool:
+        row = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM posts WHERE date = ? AND post_type = 'bulk_holding'",
+            (date,)
+        ).fetchone()
+        return row["cnt"] > 0
+
+    # --- Signal Portfolio methods ---
+
+    def insert_signal(self, rec: Dict) -> bool:
+        """Insert a new signal into portfolio. Returns True if inserted."""
+        try:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO signal_portfolio "
+                "(signal_date, code, company_name, signal_type, num_institutions, "
+                "signal_ratio, entry_date, entry_price, status) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (rec["signal_date"], rec["code"], rec.get("company_name"),
+                 rec["signal_type"], rec.get("num_institutions"),
+                 rec.get("signal_ratio"), rec.get("entry_date"),
+                 rec.get("entry_price"), "open"),
+            )
+            self.conn.commit()
+            return self.conn.total_changes > 0
+        except Exception:
+            return False
+
+    def get_open_signals(self) -> List[Dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM signal_portfolio WHERE status='open' ORDER BY signal_date"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_signals_needing_entry(self) -> List[Dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM signal_portfolio WHERE entry_price IS NULL ORDER BY signal_date"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_signals_range(self, from_date: str, to_date: str) -> List[Dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM signal_portfolio WHERE signal_date BETWEEN ? AND ? "
+            "ORDER BY signal_date DESC", (from_date, to_date)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_signal_entry(self, signal_date: str, code: str, signal_type: str,
+                            entry_date: str, entry_price: float):
+        self.conn.execute(
+            "UPDATE signal_portfolio SET entry_date=?, entry_price=?, updated_at=CURRENT_TIMESTAMP "
+            "WHERE signal_date=? AND code=? AND signal_type=?",
+            (entry_date, entry_price, signal_date, code, signal_type),
+        )
+        self.conn.commit()
+
+    def update_signal_prices(self, signal_date: str, code: str, signal_type: str, updates: Dict):
+        sets = []
+        vals = []
+        for k in ("price_5d", "price_20d", "current_price", "ret_5d", "ret_20d",
+                   "ret_current", "pnl_5d", "pnl_20d", "pnl_current", "status"):
+            if k in updates:
+                sets.append(f"{k}=?")
+                vals.append(updates[k])
+        if not sets:
+            return
+        sets.append("updated_at=CURRENT_TIMESTAMP")
+        vals.extend([signal_date, code, signal_type])
+        self.conn.execute(
+            f"UPDATE signal_portfolio SET {', '.join(sets)} "
+            "WHERE signal_date=? AND code=? AND signal_type=?", vals
+        )
+        self.conn.commit()
+
+    def get_pnl_summary(self, from_date: str, to_date: str) -> Dict[str, Any]:
+        """Get P&L summary statistics for a date range."""
+        rows = self.conn.execute(
+            "SELECT * FROM signal_portfolio WHERE signal_date BETWEEN ? AND ? "
+            "AND entry_price IS NOT NULL", (from_date, to_date)
+        ).fetchall()
+        if not rows:
+            return {"count": 0}
+
+        by_type: Dict[str, list] = {"concentrated": [], "new_position": [], "big_increase": []}
+        for r in rows:
+            st = r["signal_type"]
+            if st in by_type:
+                by_type[st].append(dict(r))
+
+        result: Dict[str, Any] = {"count": len(rows), "by_type": {}}
+        total_pnl = 0.0
+        total_wins = 0
+        total_losses = 0
+
+        for stype, signals in by_type.items():
+            if not signals:
+                continue
+            # Use 5d P&L for closed, current P&L for open
+            pnls = []
+            for s in signals:
+                p = s.get("pnl_5d") if s.get("status") != "open" else s.get("pnl_current")
+                if p is not None:
+                    pnls.append(p)
+            wins = sum(1 for p in pnls if p > 0)
+            losses = sum(1 for p in pnls if p <= 0)
+            cum_pnl = sum(pnls)
+            total_pnl += cum_pnl
+            total_wins += wins
+            total_losses += losses
+            result["by_type"][stype] = {
+                "count": len(signals),
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(wins / len(pnls) * 100, 1) if pnls else 0,
+                "cumulative_pnl": round(cum_pnl),
+                "avg_pnl": round(cum_pnl / len(pnls)) if pnls else 0,
+            }
+
+        result["total_pnl"] = round(total_pnl)
+        result["total_wins"] = total_wins
+        result["total_losses"] = total_losses
+        result["total_win_rate"] = (
+            round(total_wins / (total_wins + total_losses) * 100, 1)
+            if (total_wins + total_losses) > 0 else 0
+        )
+
+        # Best and worst signals
+        all_with_pnl = [
+            dict(r) for r in rows
+            if r["pnl_current"] is not None or r["pnl_5d"] is not None
+        ]
+        if all_with_pnl:
+            for s in all_with_pnl:
+                s["_pnl"] = (
+                    s.get("pnl_5d") if s.get("status") != "open"
+                    else s.get("pnl_current", 0)
+                )
+            result["best"] = max(all_with_pnl, key=lambda x: x.get("_pnl", 0))
+            result["worst"] = min(all_with_pnl, key=lambda x: x.get("_pnl", 0))
+
+        return result
 
 
 # ===================================================================
@@ -563,6 +786,229 @@ def find_concentrated_shorts(disclosures: List[Dict]) -> List[Dict]:
             })
     concentrated.sort(key=lambda x: x["total_ratio"], reverse=True)
     return concentrated
+
+
+# ===================================================================
+# Signal P&L Tracker
+# ===================================================================
+POSITION_SIZE = 1_000_000  # ¥1M per signal
+
+
+class SignalPnLTracker:
+    """Track hypothetical P&L from shorting signal stocks."""
+
+    def __init__(self, client: JQuantsClient, db: TrackerDB):
+        self.client = client
+        self.db = db
+
+    def record_signals(self, disc_date: str, disclosures: List[Dict]):
+        """Record concentrated and new-position signals from today's disclosures."""
+        # 1. Concentrated shorts (2+ institutions)
+        concentrated = find_concentrated_shorts(disclosures)
+        for c in concentrated:
+            self.db.insert_signal({
+                "signal_date": disc_date,
+                "code": c["code"],
+                "company_name": c.get("company_name"),
+                "signal_type": "concentrated",
+                "num_institutions": c["count"],
+                "signal_ratio": c.get("total_ratio"),
+            })
+
+        # 2. New positions
+        new_positions = [d for d in disclosures if d.get("change_type") == "new"]
+        for d in new_positions:
+            self.db.insert_signal({
+                "signal_date": disc_date,
+                "code": d["code"],
+                "company_name": d.get("company_name"),
+                "signal_type": "new_position",
+                "num_institutions": 1,
+                "signal_ratio": d.get("ratio"),
+            })
+
+        # 3. Big increases (ratio increase >= 0.10%)
+        big_increases = [d for d in disclosures
+                         if d.get("change_type") == "increase"
+                         and d.get("prev_ratio") is not None
+                         and (d["ratio"] - d["prev_ratio"]) >= 0.10]
+        for d in big_increases:
+            self.db.insert_signal({
+                "signal_date": disc_date,
+                "code": d["code"],
+                "company_name": d.get("company_name"),
+                "signal_type": "big_increase",
+                "num_institutions": 1,
+                "signal_ratio": d.get("ratio"),
+            })
+
+        log.info("Recorded signals: %d concentrated, %d new, %d big_increase",
+                 len(concentrated), len(new_positions), len(big_increases))
+
+    def update_prices(self):
+        """Update prices and P&L for all signals needing updates."""
+        today_fmt = datetime.now().strftime("%Y%m%d")
+
+        # 1. Fill entry prices for signals that don't have them yet
+        needing_entry = self.db.get_signals_needing_entry()
+        for sig in needing_entry:
+            sig_date_fmt = sig["signal_date"].replace("-", "")
+            try:
+                prices = self.client.get_prices(
+                    code=sig["code"], from_=sig_date_fmt, to_=today_fmt
+                )
+                if not prices or len(prices) < 2:
+                    continue
+                # Entry = next trading day's open (index 1 = day after signal)
+                entry_day = prices[1]
+                entry_date = entry_day.get("Date", "")
+                if len(entry_date) == 8:
+                    entry_date = f"{entry_date[:4]}-{entry_date[4:6]}-{entry_date[6:]}"
+                entry_price = entry_day.get("AdjOpen") or entry_day.get("Open")
+                if not entry_price or entry_price <= 0:
+                    entry_price = entry_day.get("AdjC") or entry_day.get("Close")
+                if entry_price and entry_price > 0:
+                    self.db.update_signal_entry(
+                        sig["signal_date"], sig["code"], sig["signal_type"],
+                        entry_date, entry_price
+                    )
+                    log.info("Entry: %s %s @ ¥%.0f (%s)",
+                             sig["code"], sig["signal_type"], entry_price, entry_date)
+            except Exception as e:
+                log.debug("Price fetch failed for %s: %s", sig["code"], e)
+            time.sleep(0.3)
+
+        # 2. Update current prices and P&L for all open signals
+        open_signals = self.db.get_open_signals()
+        for sig in open_signals:
+            if not sig.get("entry_price"):
+                continue
+            entry_price = sig["entry_price"]
+            sig_date_fmt = sig["signal_date"].replace("-", "")
+
+            try:
+                prices = self.client.get_prices(
+                    code=sig["code"], from_=sig_date_fmt, to_=today_fmt
+                )
+                if not prices:
+                    continue
+
+                # Build price series (adjusted close)
+                price_list = []
+                for p in prices:
+                    adj_c = p.get("AdjC") or p.get("Close")
+                    if adj_c and adj_c > 0:
+                        price_list.append(adj_c)
+
+                if not price_list:
+                    continue
+
+                updates: Dict[str, Any] = {}
+                current_price = price_list[-1]
+                updates["current_price"] = current_price
+                updates["ret_current"] = round((current_price / entry_price - 1), 6)
+                # Short P&L: profit when price goes DOWN
+                updates["pnl_current"] = round(
+                    -(current_price / entry_price - 1) * POSITION_SIZE
+                )
+
+                # 5-day price (index 0 is signal day, index 1 is entry, so 5d = index 6)
+                if len(price_list) > 6:
+                    p5 = price_list[6]
+                    updates["price_5d"] = p5
+                    updates["ret_5d"] = round((p5 / entry_price - 1), 6)
+                    updates["pnl_5d"] = round(-(p5 / entry_price - 1) * POSITION_SIZE)
+
+                # 20-day price (index 21)
+                if len(price_list) > 21:
+                    p20 = price_list[21]
+                    updates["price_20d"] = p20
+                    updates["ret_20d"] = round((p20 / entry_price - 1), 6)
+                    updates["pnl_20d"] = round(-(p20 / entry_price - 1) * POSITION_SIZE)
+                    updates["status"] = "closed"
+
+                self.db.update_signal_prices(
+                    sig["signal_date"], sig["code"], sig["signal_type"], updates
+                )
+            except Exception as e:
+                log.debug("Price update failed for %s: %s", sig["code"], e)
+            time.sleep(0.3)
+
+        log.info("Updated prices for %d open signals", len(open_signals))
+
+    def backfill(self, from_date: Optional[str] = None):
+        """Backfill signals from historical disclosures data."""
+        if not from_date:
+            # Default: earliest date in disclosures
+            row = self.db.conn.execute(
+                "SELECT MIN(disc_date) FROM disclosures"
+            ).fetchone()
+            from_date = row[0] if row and row[0] else None
+            if not from_date:
+                log.info("No disclosures to backfill")
+                return
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        rows = self.db.conn.execute(
+            "SELECT DISTINCT disc_date FROM disclosures WHERE disc_date BETWEEN ? AND ? "
+            "ORDER BY disc_date", (from_date, today)
+        ).fetchall()
+
+        log.info("Backfilling signals from %s to %s (%d dates)", from_date, today, len(rows))
+        for row in rows:
+            d = row[0]
+            disc_rows = self.db.conn.execute(
+                "SELECT * FROM disclosures WHERE disc_date=?", (d,)
+            ).fetchall()
+            disclosures = [dict(r) for r in disc_rows]
+            # Add code_4 field needed by find_concentrated_shorts
+            for disc in disclosures:
+                disc["code_4"] = disc["code"][:4] if len(disc["code"]) >= 4 else disc["code"]
+                disc["ss_short"] = shorten_ss_name(disc["ss_name"])
+            self.record_signals(d, disclosures)
+
+        log.info("Backfill complete. Updating prices...")
+        self.update_prices()
+
+    def format_pnl_tweet(self, days: int = 30) -> Optional[str]:
+        """Format P&L summary for X post."""
+        end = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        summary = self.db.get_pnl_summary(start, end)
+
+        if summary["count"] == 0:
+            return None
+
+        dt = datetime.now()
+        lines = [f"\U0001f4caシグナル仮想損益({dt.month}/{dt.day}時点)"]
+        lines.append(f"直近{days}日間のシグナル成績:")
+        lines.append("")
+
+        type_labels = {
+            "concentrated": "集中砲火",
+            "new_position": "新規参入",
+            "big_increase": "大幅増加",
+        }
+
+        for stype, label in type_labels.items():
+            data = summary["by_type"].get(stype)
+            if not data or data["count"] == 0:
+                continue
+            pnl = data["cumulative_pnl"]
+            pnl_str = f"+{pnl:,}" if pnl >= 0 else f"{pnl:,}"
+            lines.append(f"{label}: {data['wins']}勝{data['losses']}敗"
+                         f"(勝率{data['win_rate']:.0f}%) {pnl_str}円")
+
+        lines.append("")
+        total = summary["total_pnl"]
+        total_str = f"+{total:,}" if total >= 0 else f"{total:,}"
+        lines.append(f"合計: {summary['total_wins']}勝{summary['total_losses']}敗 {total_str}円")
+        lines.append("")
+        lines.append("※1シグナル100万円仮想空売り")
+        lines.append("※貸株料・手数料除く")
+        lines.append("#機関空売り #シグナル検証")
+
+        return "\n".join(lines)
 
 
 # ===================================================================
@@ -880,6 +1326,52 @@ def format_monthly_tweet(stats: Dict, verif_stats: Optional[Dict] = None) -> str
     return text
 
 
+def format_bulk_holding_tweet(holdings: List[Dict], stock_map: Dict) -> str:
+    """Format tweet for EDINET bulk holding reports (大量保有報告書)."""
+    if not holdings:
+        return ""
+
+    lines = ["\U0001f4cb 大量保有報告書 速報\n"]
+
+    new_reports = [h for h in holdings if h.get("report_type") == "new"]
+    chg_reports = [h for h in holdings if h.get("report_type") == "change"]
+
+    if new_reports:
+        lines.append("【新規】")
+        for h in new_reports[:3]:
+            code = h.get("sec_code", "")[:4]
+            name = stock_map.get(code + "0", h.get("issuer_name", code))
+            name = shorten_company(name)
+            filer = h.get("filer_name", "")[:10]
+            ratio = h.get("holding_ratio")
+            r_str = f"{ratio:.1f}%" if ratio else "?%"
+            lines.append(f"  {name}({code}) {filer} \u2192 {r_str}")
+
+    if chg_reports:
+        lines.append("【変更】")
+        for h in chg_reports[:3]:
+            code = h.get("sec_code", "")[:4]
+            name = stock_map.get(code + "0", h.get("issuer_name", code))
+            name = shorten_company(name)
+            filer = h.get("filer_name", "")[:10]
+            ratio = h.get("holding_ratio")
+            prev = h.get("prev_ratio")
+            if ratio and prev:
+                arrow = "\U0001f53a" if ratio > prev else "\U0001f53d"
+                lines.append(f"  {name}({code}) {filer} {prev:.1f}%\u2192{ratio:.1f}% {arrow}")
+            elif ratio:
+                lines.append(f"  {name}({code}) {filer} \u2192 {ratio:.1f}%")
+
+    total = len(holdings)
+    lines.append(f"\n計{total}件")
+    lines.append(f"\n詳細 \u2192 {NOTE_URL}")
+
+    tweet = "\n".join(lines)
+    if len(tweet) > MAX_TWEET_LEN:
+        tweet = tweet[:MAX_TWEET_LEN - 3] + "..."
+    return tweet
+
+
 # ===================================================================
 # X (Twitter) Posting
 # ===================================================================
@@ -1115,6 +1607,25 @@ def run_daily(client: JQuantsClient, db: TrackerDB, dry_run: bool = False,
                        [{"code": c["code_4"], "count": c["count"],
                          "total_ratio": c["total_ratio"]} for c in concentrated[:5]])
 
+    # --- Signal P&L tracking ---
+    try:
+        tracker = SignalPnLTracker(client, db)
+        tracker.record_signals(date, disclosures)
+        tracker.update_prices()
+
+        # Tweet: P&L summary (once per week, on Fridays)
+        dt_obj = datetime.strptime(date, "%Y-%m-%d")
+        if dt_obj.weekday() == 4:  # Friday
+            pnl_text = tracker.format_pnl_tweet()
+            if pnl_text:
+                last_tid_pnl = conc_tid or daily_tid
+                if last_tid_pnl and not dry_run:
+                    time.sleep(30)
+                pnl_tid = post_tweet(pnl_text, dry_run=dry_run)
+                db.insert_post(date, "pnl_summary", pnl_text, pnl_tid)
+    except Exception as e:
+        log.warning("Signal P&L tracking failed: %s", e)
+
     # --- Tweet 3: Sentiment barometer ---
     sentiment = calculate_sentiment(disclosures, db, date)
     last_tid = conc_tid or daily_tid
@@ -1134,6 +1645,9 @@ def run_daily(client: JQuantsClient, db: TrackerDB, dry_run: bool = False,
             anom_tid = post_tweet(anom_text, dry_run=dry_run)
             db.insert_post(date, "anomaly", anom_text, anom_tid,
                            [{"code": a["code_4"], "z": a["z_score"]} for a in anomalies])
+
+    # --- Bulk Holdings (EDINET) ---
+    run_bulk_holdings(client, db, dry_run=dry_run)
 
     # --- Charts ---
     generate_charts(disclosures, date, client=client)
@@ -1204,6 +1718,56 @@ def run_charts(client: JQuantsClient, db: TrackerDB, target_date: Optional[str] 
         generate_charts(disclosures, date)
 
 
+def run_bulk_holdings(client: JQuantsClient, db: TrackerDB, dry_run: bool = False):
+    """Fetch and post EDINET bulk holding reports."""
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    if db.has_bulk_holding_post(today):
+        log.info("Bulk holding post already sent today")
+        return
+
+    try:
+        edinet = EDINETClient(project_root=PROJECT_ROOT)
+    except Exception as e:
+        log.warning(f"EDINET client init failed: {e}")
+        return
+
+    # Fetch last 3 days of bulk holdings
+    date_from = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+    try:
+        holdings = edinet.fetch_bulk_holdings(date_from, today)
+    except Exception as e:
+        log.error(f"EDINET fetch failed: {e}")
+        return
+
+    if not holdings:
+        log.info("No bulk holdings found")
+        return
+
+    # Store in tracker DB
+    for h in holdings:
+        db.insert_bulk_holding(h)
+
+    # Filter to today/yesterday
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    recent = [h for h in holdings if h.get("submit_date") in (today, yesterday)]
+
+    if not recent:
+        log.info("No recent bulk holdings to tweet")
+        return
+
+    stock_map = get_stock_name_map(client)
+    tweet = format_bulk_holding_tweet(recent, stock_map)
+
+    if tweet:
+        log.info(f"Bulk holding tweet:\n{tweet}")
+        if not dry_run:
+            tid = post_tweet(tweet)
+            if tid:
+                db.insert_post(today, "bulk_holding", tweet, tid,
+                               {"count": len(recent)})
+
+
 # ===================================================================
 # CLI Entry Point
 # ===================================================================
@@ -1211,10 +1775,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="X Bot JP - 機関投資家 空売り動向トラッカー",
     )
-    parser.add_argument("--mode", choices=["daily", "weekly", "monthly", "charts", "all", "status"],
+    parser.add_argument("--mode", choices=["daily", "weekly", "monthly", "charts", "bulk", "all", "status"],
                         default="daily")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--date", type=str, default=None, help="Override date (YYYY-MM-DD)")
+    parser.add_argument("--backfill-signals", action="store_true",
+                        help="Backfill signal portfolio from historical data")
     args = parser.parse_args()
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -1243,6 +1809,12 @@ def main():
 
     db = TrackerDB()
 
+    if args.backfill_signals:
+        tracker = SignalPnLTracker(client, db)
+        tracker.backfill(from_date=args.date)
+        db.close()
+        return
+
     try:
         if args.mode == "daily":
             run_daily(client, db, dry_run=args.dry_run, target_date=args.date)
@@ -1252,6 +1824,8 @@ def main():
             run_monthly(db, dry_run=args.dry_run)
         elif args.mode == "charts":
             run_charts(client, db, target_date=args.date)
+        elif args.mode == "bulk":
+            run_bulk_holdings(client, db, dry_run=args.dry_run)
         elif args.mode == "all":
             run_daily(client, db, dry_run=args.dry_run, target_date=args.date)
             run_weekly(client, db, dry_run=args.dry_run, target_date=args.date)
