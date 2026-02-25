@@ -45,6 +45,7 @@ import pandas as pd
 import httpx
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -52,6 +53,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # Configuration
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+from shield.edinet_client import EDINETClient
+
 DATA_DIR = PROJECT_ROOT / "data" / "numerai_signals_jp"
 MODEL_DIR = DATA_DIR / "models"
 CACHE_DIR = DATA_DIR / "cache"
@@ -86,6 +90,10 @@ FEATURE_COLS = [
     "margin_ratio", "margin_ratio_chg",
     "sector_short_ratio",
     "short_position_ratio",
+    "edinet_revenue_growth",
+    "edinet_op_margin_chg",
+    "edinet_roe_chg",
+    "edinet_cf_yield",
 ]
 
 # ---------------------------------------------------------------------------
@@ -277,7 +285,7 @@ def fetch_all_data(jq: JQuantsClient, lookback_days: int = PRICE_LOOKBACK_DAYS):
     margin_cache = CACHE_DIR / "margin.parquet"
     if margin_cache.exists():
         existing = pd.read_parquet(margin_cache)
-        existing["Date"] = pd.to_datetime(existing["Date"]).dt.strftime("%Y%m%d")
+        existing["Date"] = pd.to_datetime(existing["Date"], format="mixed").dt.strftime("%Y%m%d")
         last_date = existing["Date"].max()
         if last_date >= to_date:
             margin = existing
@@ -300,7 +308,7 @@ def fetch_all_data(jq: JQuantsClient, lookback_days: int = PRICE_LOOKBACK_DAYS):
     short_cache = CACHE_DIR / "short_ratio.parquet"
     if short_cache.exists():
         existing = pd.read_parquet(short_cache)
-        existing["Date"] = pd.to_datetime(existing["Date"]).dt.strftime("%Y%m%d")
+        existing["Date"] = pd.to_datetime(existing["Date"], format="mixed").dt.strftime("%Y%m%d")
         last_date = existing["Date"].max()
         if last_date >= to_date:
             short = existing
@@ -342,36 +350,51 @@ def fetch_all_data(jq: JQuantsClient, lookback_days: int = PRICE_LOOKBACK_DAYS):
     log.info(f"  Short ratio records: {len(short)}")
 
     # 6. Individual stock short-sale positions (★ Premium)
+    # API requires disc_date (single day) for all-stocks query; date range needs code
     log.info("Fetching short-sale positions...")
     short_sale_cache = CACHE_DIR / "short_sale.parquet"
-    short_sale_from = (today - timedelta(days=90)).strftime("%Y%m%d")
     if short_sale_cache.exists():
         existing = pd.read_parquet(short_sale_cache)
-        existing["DiscDate"] = pd.to_datetime(existing["DiscDate"]).dt.strftime("%Y%m%d")
+        existing["DiscDate"] = pd.to_datetime(existing["DiscDate"], format="mixed").dt.strftime("%Y%m%d")
         last_date = existing["DiscDate"].max()
         if last_date >= to_date:
             short_sale = existing
             log.info(f"  Short-sale cache is up to date: {len(short_sale)} records")
         else:
-            new_from = (datetime.strptime(last_date, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
-            log.info(f"  Updating short-sale from {new_from}...")
-            try:
-                new_data = jq.get_short_sale(disc_date_from=new_from, disc_date_to=to_date)
-                short_sale = pd.concat([existing, new_data], ignore_index=True).drop_duplicates(
-                    subset=["DiscDate", "Code", "SSName"], keep="last") if len(new_data) > 0 else existing
-            except Exception as e:
-                log.warning(f"  Short-sale fetch failed: {e}")
-                short_sale = existing
+            new_from = datetime.strptime(last_date, "%Y%m%d") + timedelta(days=1)
+            log.info(f"  Updating short-sale from {new_from.strftime('%Y%m%d')}...")
+            chunks = [existing]
+            cur = new_from
+            end = datetime.strptime(to_date, "%Y%m%d")
+            while cur <= end:
+                try:
+                    chunk = jq.get_short_sale(disc_date=cur.strftime("%Y%m%d"))
+                    if len(chunk) > 0:
+                        chunks.append(chunk)
+                except Exception as e:
+                    log.warning(f"  Short-sale {cur.strftime('%Y%m%d')} failed: {e}")
+                cur += timedelta(days=1)
+            short_sale = pd.concat(chunks, ignore_index=True).drop_duplicates(
+                subset=["DiscDate", "Code", "SSName"], keep="last")
             if len(short_sale) > 0:
                 short_sale.to_parquet(short_sale_cache, index=False)
     else:
-        try:
-            short_sale = jq.get_short_sale(disc_date_from=short_sale_from, disc_date_to=to_date)
-            if len(short_sale) > 0:
-                short_sale.to_parquet(short_sale_cache, index=False)
-        except Exception as e:
-            log.warning(f"  Short-sale fetch failed: {e}")
-            short_sale = pd.DataFrame()
+        # Initial fetch: last 90 days, one day at a time
+        chunks = []
+        cur = today - timedelta(days=90)
+        end = datetime.strptime(to_date, "%Y%m%d")
+        while cur <= end:
+            try:
+                chunk = jq.get_short_sale(disc_date=cur.strftime("%Y%m%d"))
+                if len(chunk) > 0:
+                    chunks.append(chunk)
+            except Exception as e:
+                log.warning(f"  Short-sale {cur.strftime('%Y%m%d')} failed: {e}")
+            cur += timedelta(days=1)
+        short_sale = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
+        if len(short_sale) > 0:
+            short_sale = short_sale.drop_duplicates(subset=["DiscDate", "Code", "SSName"], keep="last")
+            short_sale.to_parquet(short_sale_cache, index=False)
     log.info(f"  Short-sale records: {len(short_sale)}")
 
     log.info("Data fetch complete.")
@@ -488,7 +511,7 @@ def build_features(listed: pd.DataFrame, prices: pd.DataFrame,
         return pd.DataFrame()
 
     # Ensure types
-    prices["Date"] = pd.to_datetime(prices["Date"])
+    prices["Date"] = pd.to_datetime(prices["Date"], format="mixed")
     prices["AdjC"] = pd.to_numeric(prices["AdjC"], errors="coerce")
     prices["AdjVo"] = pd.to_numeric(prices["AdjVo"], errors="coerce")
     prices["Va"] = pd.to_numeric(prices["Va"], errors="coerce")
@@ -502,12 +525,12 @@ def build_features(listed: pd.DataFrame, prices: pd.DataFrame,
     pivot_va = prices.pivot_table(index="Date", columns="Code", values="Va")
 
     # --- Price features ---
-    ret_5d = pivot_close.pct_change(5).iloc[-1]
-    ret_20d = pivot_close.pct_change(20).iloc[-1]
-    ret_60d = pivot_close.pct_change(60).iloc[-1]
+    ret_5d = pivot_close.pct_change(5, fill_method=None).iloc[-1]
+    ret_20d = pivot_close.pct_change(20, fill_method=None).iloc[-1]
+    ret_60d = pivot_close.pct_change(60, fill_method=None).iloc[-1]
 
     # --- Volatility ---
-    daily_ret = pivot_close.pct_change()
+    daily_ret = pivot_close.pct_change(fill_method=None)
     vol_20d = daily_ret.rolling(20).std().iloc[-1] * np.sqrt(252)
     vol_60d = daily_ret.rolling(60).std().iloc[-1] * np.sqrt(252)
 
@@ -558,7 +581,7 @@ def build_features(listed: pd.DataFrame, prices: pd.DataFrame,
 
     # --- Margin features (★ Premium) ---
     if len(margin) > 0:
-        margin["Date"] = pd.to_datetime(margin["Date"])
+        margin["Date"] = pd.to_datetime(margin["Date"], format="mixed")
         margin["LongVol"] = pd.to_numeric(margin["LongVol"], errors="coerce")
         margin["ShrtVol"] = pd.to_numeric(margin["ShrtVol"], errors="coerce")
 
@@ -592,7 +615,7 @@ def build_features(listed: pd.DataFrame, prices: pd.DataFrame,
 
     # --- Short-sell ratio by sector (★ Premium) ---
     if len(short) > 0 and len(listed) > 0:
-        short["Date"] = pd.to_datetime(short["Date"])
+        short["Date"] = pd.to_datetime(short["Date"], format="mixed")
         short["SellExShortVa"] = pd.to_numeric(short["SellExShortVa"], errors="coerce")
         short["ShrtWithResVa"] = pd.to_numeric(short["ShrtWithResVa"], errors="coerce")
         short["ShrtNoResVa"] = pd.to_numeric(short["ShrtNoResVa"], errors="coerce")
@@ -621,7 +644,7 @@ def build_features(listed: pd.DataFrame, prices: pd.DataFrame,
     # --- Individual stock short position ratio (★ Premium) ---
     if short_sale is not None and len(short_sale) > 0:
         ss = short_sale.copy()
-        ss["DiscDate"] = pd.to_datetime(ss["DiscDate"], errors="coerce")
+        ss["DiscDate"] = pd.to_datetime(ss["DiscDate"], format="mixed", errors="coerce")
         ss["ShrtPosToSO"] = pd.to_numeric(ss["ShrtPosToSO"], errors="coerce")
         # Aggregate: sum of all short-sellers' ratios per stock (latest date)
         ss_latest = (ss.sort_values("DiscDate")
@@ -631,6 +654,21 @@ def build_features(listed: pd.DataFrame, prices: pd.DataFrame,
         features = features.merge(ss_latest, on="Code", how="left")
     else:
         features["short_position_ratio"] = np.nan
+
+    # --- EDINET features ---
+    try:
+        edinet_feats = build_edinet_features(list(features["Code"]))
+        if not edinet_feats.empty:
+            # Map Code (5-digit) to 4-digit for join
+            features["_code4"] = features["Code"].str[:4]
+            for col in ["edinet_revenue_growth", "edinet_op_margin_chg",
+                         "edinet_roe_chg", "edinet_cf_yield"]:
+                if col in edinet_feats.columns:
+                    features[col] = features["_code4"].map(edinet_feats[col])
+            features.drop(columns=["_code4"], inplace=True, errors="ignore")
+            log.info(f"EDINET features added: {len(edinet_feats)} stocks")
+    except Exception as e:
+        log.warning(f"EDINET features skipped: {e}")
 
     # --- Rank-normalize all features to [0, 1] ---
     for col in FEATURE_COLS:
@@ -643,8 +681,37 @@ def build_features(listed: pd.DataFrame, prices: pd.DataFrame,
 
 def _get_latest_fins(fins: pd.DataFrame) -> pd.DataFrame:
     """Get the most recent financial record per stock."""
-    fins["DiscDate"] = pd.to_datetime(fins["DiscDate"], errors="coerce")
+    fins["DiscDate"] = pd.to_datetime(fins["DiscDate"], format="mixed", errors="coerce")
     return fins.sort_values("DiscDate").groupby("Code").last().reset_index()
+
+
+def build_edinet_features(sec_codes: List[str]) -> pd.DataFrame:
+    """Build EDINET-sourced fundamental features for the latest cross-section."""
+    try:
+        edinet = EDINETClient(project_root=PROJECT_ROOT)
+    except Exception as e:
+        log.warning(f"EDINET client init failed, skipping EDINET features: {e}")
+        return pd.DataFrame()
+
+    records = []
+    for code in sec_codes:
+        # sec_code in EDINET is 5-digit (e.g., "72030"), J-Quants uses 4+0
+        sec5 = code[:4] + "0" if len(code) == 4 else code
+        metrics = edinet.compute_growth_metrics(sec5)
+        if metrics:
+            records.append({
+                "code": code[:4],
+                "edinet_revenue_growth": metrics.get("revenue_growth"),
+                "edinet_op_margin_chg": metrics.get("op_margin_chg"),
+                "edinet_roe_chg": metrics.get("roe_chg"),
+                "edinet_cf_yield": metrics.get("cash_flow_yield"),
+            })
+
+    if not records:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(records).set_index("code")
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +724,7 @@ def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
     """Build historical cross-sections with forward returns as targets."""
     log.info("Building training data (rolling cross-sections)...")
 
-    prices["Date"] = pd.to_datetime(prices["Date"])
+    prices["Date"] = pd.to_datetime(prices["Date"], format="mixed")
     prices["AdjC"] = pd.to_numeric(prices["AdjC"], errors="coerce")
     prices = prices.sort_values(["Code", "Date"])
 
@@ -665,7 +732,7 @@ def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
     pivot_va = prices.pivot_table(index="Date", columns="Code", values="Va")
 
     # Forward returns (target)
-    fwd_ret = pivot_close.pct_change(FORWARD_RETURN_DAYS).shift(-FORWARD_RETURN_DAYS)
+    fwd_ret = pivot_close.pct_change(FORWARD_RETURN_DAYS, fill_method=None).shift(-FORWARD_RETURN_DAYS)
 
     # Sample dates: every 5 trading days for efficiency
     dates = pivot_close.index[60:-FORWARD_RETURN_DAYS:5]
@@ -675,7 +742,7 @@ def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
     fins_pit = pd.DataFrame()
     if len(fins) > 0:
         fins = fins.copy()
-        fins["DiscDate"] = pd.to_datetime(fins["DiscDate"], errors="coerce")
+        fins["DiscDate"] = pd.to_datetime(fins["DiscDate"], format="mixed", errors="coerce")
         for c in ["EPS", "BPS", "NP", "Eq"]:
             if c in fins.columns:
                 fins[c] = pd.to_numeric(fins[c], errors="coerce")
@@ -689,7 +756,7 @@ def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
     margin_pit = pd.DataFrame()
     if len(margin) > 0:
         margin = margin.copy()
-        margin["Date"] = pd.to_datetime(margin["Date"])
+        margin["Date"] = pd.to_datetime(margin["Date"], format="mixed")
         margin["LongVol"] = pd.to_numeric(margin["LongVol"], errors="coerce")
         margin["ShrtVol"] = pd.to_numeric(margin["ShrtVol"], errors="coerce")
         margin["margin_ratio"] = (margin["LongVol"] / margin["ShrtVol"]).replace(
@@ -705,7 +772,7 @@ def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
     short_pit = pd.DataFrame()
     if len(short) > 0:
         short = short.copy()
-        short["Date"] = pd.to_datetime(short["Date"])
+        short["Date"] = pd.to_datetime(short["Date"], format="mixed")
         short["SellExShortVa"] = pd.to_numeric(short["SellExShortVa"], errors="coerce")
         short["ShrtWithResVa"] = pd.to_numeric(short["ShrtWithResVa"], errors="coerce")
         short["ShrtNoResVa"] = pd.to_numeric(short["ShrtNoResVa"], errors="coerce")
@@ -722,7 +789,7 @@ def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
     short_sale_pit = pd.DataFrame()
     if short_sale is not None and len(short_sale) > 0:
         ss = short_sale.copy()
-        ss["DiscDate"] = pd.to_datetime(ss["DiscDate"], errors="coerce")
+        ss["DiscDate"] = pd.to_datetime(ss["DiscDate"], format="mixed", errors="coerce")
         ss["ShrtPosToSO"] = pd.to_numeric(ss["ShrtPosToSO"], errors="coerce")
         # Latest short position ratio per (Code, DiscDate)
         short_sale_pit = (ss.dropna(subset=["DiscDate"])
@@ -738,7 +805,7 @@ def build_training_data(jq: JQuantsClient, listed: pd.DataFrame,
         sector_map = listed.set_index("Code")["S33"].to_dict()
 
     all_rows = []
-    daily_ret = pivot_close.pct_change()
+    daily_ret = pivot_close.pct_change(fill_method=None)
 
     for dt in dates:
         idx = pivot_close.index.get_loc(dt)
